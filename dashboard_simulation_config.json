@@ -1,0 +1,2732 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 11,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "cf0g6y32klfy8f"
+      },
+      "description": "Parameter können dynamisch oben angepasst werden",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          },
+          "unit": "currencyEUR"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_empting"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Kosten pro Abholung"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#9ebbe6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_volume"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Kosten nach Volumen"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#e69595",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_overflow"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Überfüllungskosten"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#c3f7af",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 30,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "normal",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xField": "x_label",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 100
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cf0g6y32klfy8f"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "-- Grafana variables:\n-- $abholzyklus\n-- $pickup_day\n-- $simulation\n-- $capacity_pct        (optional; Standard 100)\n-- $dyn_max_till_empty  (Pflicht für dynamische Abholung)\n-- $cost_per_empty\n-- $cost_per_volume\n-- $overflow_cost\n\nWITH cfg AS (\n  SELECT\n    CASE lower(NULLIF('$abholzyklus',''))\n      WHEN 'täglich'     THEN 1\n      WHEN 'wöchentlich' THEN 7\n      WHEN '10-tägig'    THEN 10\n      WHEN '14-tägig'    THEN 14\n      WHEN '30-tägig'    THEN 30\n      ELSE NULL\n    END::int AS abholzyklus,\n    CASE lower(NULLIF('$pickup_day',''))\n      WHEN 'montag'     THEN 1\n      WHEN 'dienstag'   THEN 2\n      WHEN 'mittwoch'   THEN 3\n      WHEN 'donnerstag' THEN 4\n      WHEN 'freitag'    THEN 5\n      WHEN 'samstag'    THEN 6\n      WHEN 'sonntag'    THEN 7\n      ELSE NULL\n    END AS abholzyklus_tag,\n    COALESCE(NULLIF('$capacity_pct','')::numeric, 100) AS capacity_pct,\n    NULLIF('$dyn_max_till_empty','')::numeric          AS dyn_max_till_empty\n),\n\nsim AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    (ts AT TIME ZONE 'Europe/Berlin')::date AS day,\n    new_fill_in,\n    MIN((ts AT TIME ZONE 'Europe/Berlin')::date)\n      OVER (PARTITION BY sensor_id, simulation_number) AS start_date\n  FROM sensor_daily_delta\n  WHERE simulation = TRUE\n    AND simulation_number = $simulation\n    AND (ts AT TIME ZONE 'Europe/Berlin')::date <= CURRENT_DATE\n),\n\njoined AS (\n  SELECT\n    s.*,\n    c.abholzyklus,\n    c.abholzyklus_tag,\n    c.capacity_pct,\n    c.dyn_max_till_empty,\n    ((s.day - s.start_date))::int AS days_since_start,\n    -- 1=Mon .. 7=Sun\n    (((EXTRACT(dow FROM s.day)::int + 6) % 7) + 1) AS dow_user\n  FROM sim s\n  CROSS JOIN cfg c\n),\n\n-- ========= DYNAMISCHE LOGIK =========\n\noverall_cum AS (\n  SELECT\n    j.sensor_id,\n    j.simulation_number,\n    j.day,\n    j.new_fill_in,\n    j.capacity_pct,\n    j.dyn_max_till_empty,\n    SUM(j.new_fill_in) OVER (\n      PARTITION BY j.sensor_id, j.simulation_number\n      ORDER BY j.day\n      ROWS UNBOUNDED PRECEDING\n    ) AS cum_total\n  FROM joined j\n),\n\ndyn_logic AS (\n  SELECT\n    o.*,\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0\n        THEN NULL\n      ELSE FLOOR(o.cum_total / o.dyn_max_till_empty)\n    END AS dyn_grp_index,\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0 THEN 0\n      ELSE\n        CASE\n          WHEN FLOOR(o.cum_total / o.dyn_max_till_empty)\n               >\n               FLOOR(\n                 COALESCE(\n                   LAG(o.cum_total) OVER (\n                     PARTITION BY o.sensor_id, o.simulation_number\n                     ORDER BY o.day\n                   ),\n                   0\n                 ) / o.dyn_max_till_empty\n               )\n          THEN 1 ELSE 0\n        END\n    END AS pickup_flag_dyn,\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0 THEN NULL\n      ELSE o.cum_total\n           - (FLOOR(o.cum_total / o.dyn_max_till_empty) * o.dyn_max_till_empty)\n    END AS cum_fill_since_last_dyn\n  FROM overall_cum o\n),\n\ndyn_overflow AS (\n  SELECT\n    d.*,\n    CASE\n      WHEN d.cum_fill_since_last_dyn IS NOT NULL\n       AND d.capacity_pct IS NOT NULL\n       AND d.cum_fill_since_last_dyn > d.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_day_flag_dyn,\n    CASE\n      WHEN d.cum_fill_since_last_dyn IS NOT NULL\n       AND d.capacity_pct IS NOT NULL\n       AND d.cum_fill_since_last_dyn > d.capacity_pct\n       AND COALESCE(\n             LAG(d.cum_fill_since_last_dyn) OVER (\n               PARTITION BY d.sensor_id, d.simulation_number, d.dyn_grp_index\n               ORDER BY d.day\n             ),\n             0\n           ) <= d.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_event_flag_dyn\n  FROM dyn_logic d\n),\n\ndyn_deltas AS (\n  SELECT\n    d.*,\n    GREATEST(\n      d.dyn_grp_index\n      - COALESCE(\n          LAG(d.dyn_grp_index) OVER (\n            PARTITION BY d.sensor_id, d.simulation_number\n            ORDER BY d.day\n          ),\n          0\n        ),\n      0\n    ) AS dyn_index_delta\n  FROM dyn_overflow d\n),\n\ndyn_total AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    SUM(dyn_index_delta * dyn_max_till_empty) AS total_disposed_dyn\n  FROM dyn_deltas\n  GROUP BY sensor_id, simulation_number\n),\n\ndyn_summary AS (\n  SELECT\n    f.sensor_id,\n    f.simulation_number,\n    SUM(f.pickup_flag_dyn)         AS empties_dyn,\n    MAX(f.dyn_grp_index)           AS dyn_cycles_completed,\n    SUM(f.overflow_event_flag_dyn) AS overflow_events_dyn,\n    SUM(f.overflow_day_flag_dyn)   AS overflow_days_dyn,\n    MAX(c.cum_total)               AS cum_total\n  FROM dyn_overflow f\n  JOIN overall_cum c\n    ON f.sensor_id = c.sensor_id\n   AND f.simulation_number = c.simulation_number\n  GROUP BY f.sensor_id, f.simulation_number\n),\n\ndyn_statistic AS (\n  SELECT\n    d.sensor_id,\n    d.simulation_number,\n    MAX(d.dyn_grp_index)::bigint AS dyn_grp_index,\n    t.total_disposed_dyn         AS total_disposed,\n    SUM(d.new_fill_in)           AS sum_new_fill_in\n  FROM dyn_overflow d\n  JOIN dyn_total t\n    ON t.sensor_id = d.sensor_id\n   AND t.simulation_number = d.simulation_number\n  GROUP BY d.sensor_id, d.simulation_number, t.total_disposed_dyn\n),\n\n-- ========= STATISCHE LOGIK =========\n\nst_first_emptied AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    MIN(days_since_start) FILTER (\n      WHERE dow_user = abholzyklus_tag\n    ) AS first_emptied\n  FROM joined\n  GROUP BY sensor_id, simulation_number\n),\n\nst_marked AS (\n  SELECT\n    j.*,\n    fe.first_emptied,\n    CASE\n      WHEN fe.first_emptied IS NOT NULL\n       AND j.days_since_start = fe.first_emptied\n      THEN 1\n      WHEN fe.first_emptied IS NOT NULL\n       AND j.abholzyklus IS NOT NULL\n       AND j.abholzyklus > 0\n       AND j.days_since_start >= fe.first_emptied\n       AND ( (j.days_since_start - fe.first_emptied) % j.abholzyklus ) = 0\n      THEN 1\n      ELSE 0\n    END AS pickup_flag\n  FROM joined j\n  LEFT JOIN st_first_emptied fe\n    USING (sensor_id, simulation_number)\n),\n\nst_grp_calc AS (\n  SELECT\n    *,\n    SUM(pickup_flag) OVER (\n      PARTITION BY sensor_id, simulation_number\n      ORDER BY day\n    ) AS grp\n  FROM st_marked\n),\n\nst_grp_and_cum AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    day,\n    new_fill_in,\n    pickup_flag,\n    grp,\n    days_since_start,\n    first_emptied,\n    abholzyklus,\n    abholzyklus_tag,\n    capacity_pct,\n    SUM(new_fill_in) OVER (\n      PARTITION BY sensor_id, simulation_number, grp\n      ORDER BY day\n    ) AS cum_fill_since_last_pickup,\n    -- statischer Overflow-Tag: Füllstand nach letzter Leerung > Kapazitätsgrenze\n    CASE\n      WHEN capacity_pct IS NOT NULL\n       AND SUM(new_fill_in) OVER (\n             PARTITION BY sensor_id, simulation_number, grp\n             ORDER BY day\n           ) > capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_day_flag_static\n  FROM st_grp_calc\n),\n\nst_sumup AS (\n  SELECT DISTINCT\n    sensor_id,\n    simulation_number,\n    SUM(cum_fill_since_last_pickup) FILTER (\n      WHERE ((days_since_start - first_emptied) % abholzyklus) = abholzyklus - 1\n    ) OVER (PARTITION BY sensor_id, simulation_number) AS total_emptied_volumen_per_sensor,\n    COUNT(*) FILTER (WHERE pickup_flag = 1)\n      OVER (PARTITION BY sensor_id, simulation_number) AS number_of_emptied_per_sensor,\n    SUM(new_fill_in) OVER (PARTITION BY sensor_id, simulation_number) AS sum_total_volumen_per_sensor,\n    SUM(overflow_day_flag_static) OVER (PARTITION BY sensor_id, simulation_number) AS static_overflow_days\n  FROM st_grp_and_cum\n),\n\n-- ========= KOMBINIERTE KOSTEN (wide) =========\n\ncombined AS (\n  SELECT\n    d.sensor_id,\n    d.simulation_number,\n\n    -- dynamische Kosten\n    d.dyn_grp_index * $cost_per_empty    AS dyn_cost_for_empting,\n    d.total_disposed * $cost_per_volume  AS dyn_cost_for_volume,\n    s.overflow_days_dyn * $overflow_cost AS dyn_overflow_cost,\n\n    -- statische Kosten\n    su.number_of_emptied_per_sensor * $cost_per_empty      AS static_cost_for_empting,\n    su.total_emptied_volumen_per_sensor * $cost_per_volume AS static_cost_for_volume,\n    su.static_overflow_days * $overflow_cost               AS static_overflow_cost\n  FROM dyn_statistic d\n  LEFT JOIN dyn_summary s USING (sensor_id, simulation_number)\n  LEFT JOIN st_sumup su USING (sensor_id, simulation_number)\n)\n\n-- ========= AUSGABE: je Sensor 2 gestapelte Balken (dyn/stat) =========\n\nSELECT\n  sensor_id || ' dyn' AS x_label,\n  simulation_number,\n  dyn_cost_for_empting  AS cost_empting,\n  dyn_cost_for_volume   AS cost_volume,\n  dyn_overflow_cost     AS cost_overflow\nFROM combined\n\nUNION ALL\n\nSELECT\n  sensor_id || ' stat' AS x_label,\n  simulation_number,\n  static_cost_for_empting  AS cost_empting,\n  static_cost_for_volume   AS cost_volume,\n  static_overflow_cost     AS cost_overflow\nFROM combined\n\nORDER BY x_label;\n\n\n\n\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Kostenvergleich",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "simulation_number": true
+            },
+            "includeByName": {},
+            "indexByName": {},
+            "renameByName": {
+              "x_label": "Sensoren"
+            }
+          }
+        }
+      ],
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "cf0g6y32klfy8f"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          },
+          "unit": "currencyEUR"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "simulation_number"
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": true,
+                  "viz": true
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "static_overflow_cost"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Statische Überfüllungskosten"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "dyn_overflow_cost"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Dynamische Überfüllungskosten"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 11
+      },
+      "id": 28,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "never",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xField": "sensor_id",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cf0g6y32klfy8f"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "-- Grafana variables:\n-- $abholzyklus\n-- $abholzyklus_day\n-- $simulation\n-- $capacity_pct        (optional; Standard 100)\n-- $dyn_max_till_empty  (Pflicht für dynamische Abholung)\n-- $overflow_cost       (Kosten pro Overflow-Tag)\n\nWITH cfg AS (\n  SELECT\n    CASE lower(NULLIF('$abholzyklus',''))\n      WHEN 'täglich'     THEN 1\n      WHEN 'wöchentlich' THEN 7\n      WHEN '10-tägig'    THEN 10\n      WHEN '14-tägig'    THEN 14\n      WHEN '30-tägig'    THEN 30\n      ELSE NULL\n    END::int AS abholzyklus,\n    CASE lower(NULLIF('$pickup_day',''))\n      WHEN 'montag'     THEN 1\n      WHEN 'dienstag'   THEN 2\n      WHEN 'mittwoch'   THEN 3\n      WHEN 'donnerstag' THEN 4\n      WHEN 'freitag'    THEN 5\n      WHEN 'samstag'    THEN 6\n      WHEN 'sonntag'    THEN 7\n      ELSE NULL\n    END AS abholzyklus_tag,\n    COALESCE(NULLIF('$capacity_pct','')::numeric, 100) AS capacity_pct,\n    NULLIF('$dyn_max_till_empty','')::numeric          AS dyn_max_till_empty\n),\n\nsim AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    (ts AT TIME ZONE 'Europe/Berlin')::date AS day,\n    new_fill_in,\n    MIN((ts AT TIME ZONE 'Europe/Berlin')::date)\n      OVER (PARTITION BY sensor_id, simulation_number) AS start_date\n  FROM sensor_daily_delta\n  WHERE simulation = TRUE\n    AND simulation_number = $simulation\n    AND (ts AT TIME ZONE 'Europe/Berlin')::date <= CURRENT_DATE\n),\n\njoined AS (\n  SELECT\n    s.*,\n    c.abholzyklus,\n    c.abholzyklus_tag,\n    c.capacity_pct,\n    c.dyn_max_till_empty,\n    ((s.day - s.start_date))::int AS days_since_start,\n    (((EXTRACT(dow FROM s.day)::int + 6) % 7) + 1) AS dow_user  -- 1=Mon .. 7=Sun\n  FROM sim s\n  CROSS JOIN cfg c\n),\n\n/* ---------- DYNAMISCHE ABHOLLOGIK ---------- */\n\noverall_cum AS (\n  -- Laufende Gesamtsumme (unabhängig von Gruppen)\n  SELECT\n    j.sensor_id,\n    j.simulation_number,\n    j.day,\n    j.new_fill_in,\n    j.capacity_pct,\n    j.dyn_max_till_empty,\n    SUM(j.new_fill_in) OVER (\n      PARTITION BY j.sensor_id, j.simulation_number\n      ORDER BY j.day\n      ROWS UNBOUNDED PRECEDING\n    ) AS cum_total\n  FROM joined j\n),\n\ndyn_logic AS (\n  SELECT\n    o.*,\n    CASE WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0\n         THEN NULL\n         ELSE FLOOR(o.cum_total / o.dyn_max_till_empty)\n    END AS dyn_grp_index,\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0 THEN 0\n      ELSE\n        CASE\n          WHEN FLOOR(o.cum_total / o.dyn_max_till_empty)\n               >\n               FLOOR(\n                 COALESCE(\n                   LAG(o.cum_total) OVER (\n                     PARTITION BY o.sensor_id, o.simulation_number\n                     ORDER BY o.day\n                   ),\n                   0\n                 ) / o.dyn_max_till_empty\n               )\n          THEN 1 ELSE 0\n        END\n    END AS pickup_flag_dyn,\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0 THEN NULL\n      ELSE o.cum_total - (FLOOR(o.cum_total / o.dyn_max_till_empty) * o.dyn_max_till_empty)\n    END AS cum_fill_since_last_dyn\n  FROM overall_cum o\n),\n\ndyn_overflow AS (\n  SELECT\n    d.*,\n    CASE\n      WHEN d.cum_fill_since_last_dyn IS NOT NULL\n       AND d.capacity_pct IS NOT NULL\n       AND d.cum_fill_since_last_dyn > d.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_day_flag_dyn,\n    CASE\n      WHEN d.cum_fill_since_last_dyn IS NOT NULL\n       AND d.capacity_pct IS NOT NULL\n       AND d.cum_fill_since_last_dyn > d.capacity_pct\n       AND COALESCE(\n             LAG(d.cum_fill_since_last_dyn) OVER (\n               PARTITION BY d.sensor_id, d.simulation_number, d.dyn_grp_index\n               ORDER BY d.day\n             ), 0\n           ) <= d.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_event_flag_dyn\n  FROM dyn_logic d\n),\n\ndyn_overflow_sum AS (\n  SELECT \n    sensor_id,\n    simulation_number,\n    SUM(overflow_event_flag_dyn) AS dyn_overflow_events,\n    SUM(overflow_day_flag_dyn)   AS dyn_overflow_days\n  FROM dyn_overflow\n  GROUP BY sensor_id, simulation_number\n),\n\n/* ---------- STATISCHE / ZYKLISCHE ABHOLLOGIK ---------- */\n\nfirst_emptied AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    MIN(days_since_start) FILTER (WHERE dow_user = abholzyklus_tag) AS first_emptied\n  FROM joined\n  GROUP BY sensor_id, simulation_number\n),\n\nmarked AS (\n  SELECT\n    j.*,\n    fe.first_emptied,\n    CASE\n      WHEN fe.first_emptied IS NOT NULL\n       AND j.days_since_start = fe.first_emptied\n      THEN 1\n      WHEN fe.first_emptied IS NOT NULL\n       AND j.abholzyklus IS NOT NULL\n       AND j.abholzyklus > 0\n       AND j.days_since_start >= fe.first_emptied\n       AND ((j.days_since_start - fe.first_emptied) % j.abholzyklus) = 0\n      THEN 1\n      ELSE 0\n    END AS pickup_flag\n  FROM joined j\n  LEFT JOIN first_emptied fe USING (sensor_id, simulation_number)\n  ORDER BY j.sensor_id, j.simulation_number, j.day\n),\n\ngrp_calc AS (\n  SELECT\n    *,\n    SUM(pickup_flag) OVER (\n      PARTITION BY sensor_id, simulation_number\n      ORDER BY day\n    ) AS grp\n  FROM marked\n),\n\ngrp_and_cum AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    day,\n    new_fill_in,\n    pickup_flag,\n    grp,\n    days_since_start,\n    first_emptied,\n    abholzyklus,\n    abholzyklus_tag,\n    capacity_pct,\n    SUM(new_fill_in) OVER (\n      PARTITION BY sensor_id, simulation_number, grp\n      ORDER BY day\n    ) AS cum_fill_since_last_pickup\n  FROM grp_calc\n),\n\noverflow_marked AS (\n  SELECT\n    g.*,\n    CASE WHEN g.cum_fill_since_last_pickup > g.capacity_pct THEN 1 ELSE 0 END AS overflow_day_flag,\n    CASE\n      WHEN g.cum_fill_since_last_pickup > g.capacity_pct\n       AND COALESCE(\n             LAG(g.cum_fill_since_last_pickup) OVER (\n               PARTITION BY g.sensor_id, g.simulation_number, g.grp\n               ORDER BY g.day\n             ), 0\n           ) <= g.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_event_flag\n  FROM grp_and_cum g\n),\n\nstatic_overflow_sum AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    SUM(overflow_event_flag) AS static_overflow_events,\n    SUM(overflow_day_flag)   AS static_overflow_days\n  FROM overflow_marked\n  GROUP BY sensor_id, simulation_number\n)\n\n-- Gemeinsames Ergebnis: statisch & dynamisch nebeneinander\nSELECT\n  COALESCE(s.sensor_id, d.sensor_id)            AS sensor_id,\n  COALESCE(s.simulation_number, d.simulation_number) AS simulation_number,\n\n  -- Statisch\n  --s.static_overflow_events,\n  --s.static_overflow_days,\n  s.static_overflow_days * $overflow_cost       AS static_overflow_cost,\n\n  -- Dynamisch\n  --d.dyn_overflow_events,\n  --d.dyn_overflow_days,\n  d.dyn_overflow_days * $overflow_cost          AS dyn_overflow_cost\n\nFROM static_overflow_sum s\nFULL OUTER JOIN dyn_overflow_sum d\n  ON s.sensor_id = d.sensor_id\n AND s.simulation_number = d.simulation_number\nORDER BY sensor_id, simulation_number;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Überfüllungskosten Vergleich",
+      "type": "barchart"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "id": 18,
+      "panels": [],
+      "title": "Entsorgungskosten je Sensor",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "cf0g6y32klfy8f"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "shades"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          },
+          "unit": "currencyEUR"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_for_empting"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#85b59b",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Kosten nach Entleerung"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_for_volume"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#f09f9f",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Kosten nach Volumen"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
+      "id": 17,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "always",
+        "stacking": "normal",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xField": "sensor_id",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cf0g6y32klfy8f"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "-- Grafana variables:\n-- $abholzyklus\n-- $abholzyklus_day\n-- $simulation\n-- $capacity_pct   (optional; Standard 100)\n-- $dyn_max_till_empty  -- z.B. 90 oder 100 (Pflicht für dynamische Abholung)\n\nWITH cfg AS (\n  SELECT\n    CASE lower(NULLIF('$abholzyklus',''))\n      WHEN 'täglich'     THEN 1\n      WHEN 'wöchentlich' THEN 7\n      WHEN '10-tägig'    THEN 10\n      WHEN '14-tägig'    THEN 14\n      WHEN '30-tägig'    THEN 30\n      ELSE NULL\n    END::int AS abholzyklus,\n    CASE lower(NULLIF('$pickup_day',''))\n      WHEN 'montag'     THEN 1\n      WHEN 'dienstag'   THEN 2\n      WHEN 'mittwoch'   THEN 3\n      WHEN 'donnerstag' THEN 4\n      WHEN 'freitag'    THEN 5\n      WHEN 'samstag'    THEN 6\n      WHEN 'sonntag'    THEN 7\n      ELSE NULL\n    END AS abholzyklus_tag,\n    COALESCE(NULLIF('$capacity_pct','')::numeric, 100)       AS capacity_pct,\n    NULLIF('$dyn_max_till_empty','')::numeric                AS dyn_max_till_empty\n),\n\nsim AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    (ts AT TIME ZONE 'Europe/Berlin')::date AS day,\n    new_fill_in,\n    MIN((ts AT TIME ZONE 'Europe/Berlin')::date) OVER (PARTITION BY sensor_id, simulation_number) AS start_date\n  FROM sensor_daily_delta\n  WHERE simulation = TRUE\n    AND simulation_number = $simulation\n    AND (ts AT TIME ZONE 'Europe/Berlin')::date <= CURRENT_DATE\n),\n\njoined AS (\n  SELECT\n    s.*,\n    c.abholzyklus,\n    c.abholzyklus_tag,\n    c.capacity_pct,\n    c.dyn_max_till_empty,\n    ((s.day - s.start_date))::int AS days_since_start,\n    (((EXTRACT(dow FROM s.day)::int + 6) % 7) + 1) AS dow_user  -- 1=Mon .. 7=Sun\n  FROM sim s\n  CROSS JOIN cfg c\n),\n\noverall_cum AS (\n  -- Laufende Gesamtsumme (unabhängig vom fixen grp)\n  SELECT\n    j.sensor_id,\n    j.simulation_number,\n    j.day,\n    j.new_fill_in,\n    j.capacity_pct,\n    j.dyn_max_till_empty,\n    SUM(j.new_fill_in) OVER (\n      PARTITION BY j.sensor_id, j.simulation_number\n      ORDER BY j.day\n      ROWS UNBOUNDED PRECEDING\n    ) AS cum_total -- Gesamtsumme , sollte = zu static sein\n  FROM joined j\n),\n\ndyn_logic AS (\n  SELECT\n    o.*,\n    -- Sicherheit: dyn_max > 0\n    CASE WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0\n         THEN NULL\n         ELSE FLOOR(o.cum_total / o.dyn_max_till_empty)\n    END AS dyn_grp_index,  -- steigt um 1 bei jeder Abholung\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0 THEN 0\n      ELSE\n        CASE\n          WHEN FLOOR(o.cum_total / o.dyn_max_till_empty)\n               >\n               FLOOR(\n                 COALESCE(\n                   LAG(o.cum_total) OVER (PARTITION BY o.sensor_id, o.simulation_number ORDER BY o.day),\n                   0\n                 ) / o.dyn_max_till_empty\n               )\n          THEN 1 ELSE 0\n        END\n    END AS pickup_flag_dyn,\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0 THEN NULL\n      ELSE o.cum_total - (FLOOR(o.cum_total / o.dyn_max_till_empty) * o.dyn_max_till_empty)\n    END AS cum_fill_since_last_dyn\n  FROM overall_cum o\n),\n\ndyn_overflow AS (\n  -- Overflow relativ zur dynamischen Füllstandsbilanz \n  SELECT\n    d.*,\n    CASE\n      WHEN d.cum_fill_since_last_dyn IS NOT NULL AND d.capacity_pct IS NOT NULL\n           AND d.cum_fill_since_last_dyn > d.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_day_flag_dyn,\n    CASE\n      WHEN d.cum_fill_since_last_dyn IS NOT NULL AND d.capacity_pct IS NOT NULL\n           AND d.cum_fill_since_last_dyn > d.capacity_pct\n           AND COALESCE(\n                 LAG(d.cum_fill_since_last_dyn) OVER (\n                   PARTITION BY d.sensor_id, d.simulation_number, d.dyn_grp_index\n                   ORDER BY d.day\n                 ), 0\n               ) <= d.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_event_flag_dyn\n  FROM dyn_logic d\n),\n\n\n\ndyn_deltas AS (\n  SELECT\n    d.*,\n    GREATEST(\n      d.dyn_grp_index\n      - COALESCE(\n          LAG(d.dyn_grp_index) OVER (\n            PARTITION BY d.sensor_id, d.simulation_number\n            ORDER BY d.day\n          ), 0\n        ),\n      0\n    ) AS dyn_index_delta\n  FROM dyn_overflow d\n),\n\ndyn_total AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    SUM(dyn_index_delta * dyn_max_till_empty) AS total_disposed_dyn\n  FROM dyn_deltas\n  GROUP BY sensor_id, simulation_number\n),\n\n\ndyn_summary AS (\n  SELECT\n    f.sensor_id,\n    f.simulation_number,\n    SUM(f.pickup_flag_dyn)         AS empties_dyn,\n    MAX(f.dyn_grp_index)           AS dyn_cycles_completed,\n    SUM(f.overflow_event_flag_dyn) AS overflow_events_dyn,\n    SUM(f.overflow_day_flag_dyn)   AS overflow_days_dyn,\n    MAX(c.cum_total)               AS cum_total\n  FROM dyn_overflow f\n  JOIN overall_cum c\n    ON f.sensor_id = c.sensor_id\n   AND f.simulation_number = c.simulation_number\n  GROUP BY f.sensor_id, f.simulation_number\n),\n\nstatistic AS (\n  SELECT\n    d.sensor_id,\n    MAX(d.dyn_grp_index)::bigint AS dyn_grp_index,\n    t.total_disposed_dyn         AS total_disposed,\n    SUM(d.new_fill_in)           AS sum_new_fill_in\n  FROM dyn_overflow d\n  JOIN dyn_total t\n    ON t.sensor_id = d.sensor_id\n   AND t.simulation_number = d.simulation_number\n  GROUP BY d.sensor_id, d.simulation_number, t.total_disposed_dyn\n)\n\nSELECT\n  sensor_id,\n  dyn_grp_index * $cost_per_empty  AS cost_for_empting,\n  total_disposed * $cost_per_volume AS cost_for_volume\nFROM statistic\nGROUP BY sensor_id, dyn_grp_index, total_disposed, sum_new_fill_in\n\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Dynamische Entsorgungskosten pro Sensor",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "cf0g6y32klfy8f"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "shades"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          },
+          "unit": "currencyEUR"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_for_empting"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#85b59b",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Kosten nach Entleerung"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_for_volume"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#f09f9f",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "Kosten nach Volumen"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
+      "id": 16,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "always",
+        "stacking": "normal",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cf0g6y32klfy8f"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "-- Grafana variables:\n-- $abholzyklus    (z.B. 'täglich','wöchentlich','10-tägig','14-tägig','30-tägig' oder '')\n-- $abholzyklus_day (z.B. 'Mittwoch')\n-- $simulation     (z.B. 1)\nWITH cfg AS (\n  SELECT\n    CASE\n      lower(NULLIF('$abholzyklus', ''))\n      WHEN 'täglich' THEN 1\n      WHEN 'wöchentlich' THEN 7\n      WHEN '10-tägig' THEN 10\n      WHEN '14-tägig' THEN 14\n      WHEN '30-tägig' THEN 30\n      ELSE NULL\n    END :: int AS abholzyklus,\n    CASE\n      lower(NULLIF('$pickup_day', ''))\n      WHEN 'montag' THEN 1\n      WHEN 'dienstag' THEN 2\n      WHEN 'mittwoch' THEN 3\n      WHEN 'donnerstag' THEN 4\n      WHEN 'freitag' THEN 5\n      WHEN 'samstag' THEN 6\n      WHEN 'sonntag' THEN 7\n      ELSE NULL\n    END AS abholzyklus_tag\n),\n\nsim AS (\n  -- Datumsebene aus sensor_daily_delta\n  SELECT\n    sensor_id,\n    simulation_number,\n    (ts AT TIME ZONE 'Europe/Berlin') :: date AS day,\n    new_fill_in,\n    MIN((ts AT TIME ZONE 'Europe/Berlin') :: date) OVER (PARTITION BY sensor_id, simulation_number) AS start_date\n  FROM\n    sensor_daily_delta\n  WHERE\n    simulation = TRUE\n    AND simulation_number = $simulation\n    AND (ts AT TIME ZONE 'Europe/Berlin') :: date <= CURRENT_DATE -- AND sensor_id = 'Simu001'   -- optional: zum Testen aktivieren\n),\n\njoined AS (\n  -- cfg per CROSS JOIN in jede Zeile ziehen und Hilfsspalten berechnen\n  SELECT\n    s.*,\n    c.abholzyklus,\n    c.abholzyklus_tag,\n    ((s.day - s.start_date)) :: int AS days_since_start,\n    -- dow_user: 1=Mon .. 7=Sun\n    (\n      (\n        (\n          EXTRACT(\n            dow\n            FROM\n              s.day\n          ) :: int + 6\n        ) % 7\n      ) + 1\n    ) AS dow_user\n  FROM\n    sim s\n    CROSS JOIN cfg c\n),\n-- erstes days_since_start finden, an dem der gewählte Wochentag auftritt\nfirst_emptied AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    MIN(days_since_start) FILTER (\n      WHERE\n        dow_user = abholzyklus_tag\n    ) AS first_emptied\n  FROM\n    joined\n  GROUP BY\n    sensor_id,\n    simulation_number\n),\n\n-- pickup-Logik: erstes Mal = days_since_start == first_emptied,\n-- danach: (days_since_start - first_emptied) % abholzyklus = 0 (wenn abholzyklus gesetzt)\nmarked AS (\n  SELECT\n    j.*,\n    fe.first_emptied,\n    CASE\n      WHEN fe.first_emptied IS NOT NULL\n      AND j.days_since_start = fe.first_emptied THEN 1\n      WHEN fe.first_emptied IS NOT NULL\n      AND j.abholzyklus IS NOT NULL\n      AND j.abholzyklus > 0\n      AND j.days_since_start >= fe.first_emptied\n      AND (\n        (j.days_since_start - fe.first_emptied) % j.abholzyklus\n      ) = 0 THEN 1\n      ELSE 0\n    END AS pickup_flag\n  FROM\n    joined j\n    LEFT JOIN first_emptied fe USING (sensor_id, simulation_number)\n  ORDER BY\n    j.sensor_id,\n    j.simulation_number,\n    j.day\n),\n\ngrp_calc AS (\n  SELECT\n    *,\n    SUM(pickup_flag) OVER (\n      PARTITION BY sensor_id,\n      simulation_number\n      ORDER BY\n        day\n    ) AS grp\n  FROM\n    marked\n),\n\ngrp_and_cum AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    day,\n    new_fill_in,\n    pickup_flag,\n    grp,\n    days_since_start,\n    first_emptied,\n    abholzyklus,\n    abholzyklus_tag,\n    SUM(new_fill_in) OVER (\n      PARTITION BY sensor_id,\n      simulation_number,\n      grp\n      ORDER BY\n        day\n    ) AS cum_fill_since_last_pickup\n  FROM\n    grp_calc\n), \n\nsumup AS (\n  SELECT\n    sensor_id,\n    SUM(cum_fill_since_last_pickup) FILTER (\n      WHERE\n        ((days_since_start - first_emptied) % abholzyklus) = abholzyklus -1\n    ) OVER (PARTITION BY sensor_id, simulation_number) AS total_emptied_volumen_per_sensor,\n    COUNT(*) FILTER (\n      WHERE\n        pickup_flag = 1\n    ) OVER (PARTITION BY sensor_id, simulation_number) AS number_of_emptied_per_sensor,\n    SUM(new_fill_in) OVER (PARTITION BY sensor_id, simulation_number) AS sum_total_volumen_per_sensor\n  FROM\n    grp_and_cum\n)\nSELECT\n  sensor_id,\n  number_of_emptied_per_sensor * $cost_per_empty AS cost_for_empting,\n  total_emptied_volumen_per_sensor * $cost_per_volume AS cost_for_volume\nFROM\n  sumup\nGROUP BY sensor_id, number_of_emptied_per_sensor, total_emptied_volumen_per_sensor",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Statische Entsorgungskosten pro Sensor",
+      "type": "barchart"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "id": 15,
+      "panels": [],
+      "title": "Kostenvergleich (Durchschnitt über alle Sensoren)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "cf0g6y32klfy8f"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2,
+          "fieldMinMax": false,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          },
+          "unit": "currencyEUR"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_for_empting"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Kosten für Entleerungsfahrten"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_for_volume"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Volumenbasierte Kosten"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Gesamtkosten"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "semi-dark-blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 0,
+        "y": 33
+      },
+      "id": 13,
+      "maxPerRow": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "mean"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cf0g6y32klfy8f"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "hide": false,
+          "rawQuery": true,
+          "rawSql": "-- Grafana variables:\n-- $abholzyklus\n-- $abholzyklus_day\n-- $simulation\n-- $capacity_pct   (optional; Standard 100)\n-- $dyn_max_till_empty  -- z.B. 90 oder 100 (Pflicht für dynamische Abholung)\n\nWITH cfg AS (\n  SELECT\n    CASE lower(NULLIF('$abholzyklus',''))\n      WHEN 'täglich'     THEN 1\n      WHEN 'wöchentlich' THEN 7\n      WHEN '10-tägig'    THEN 10\n      WHEN '14-tägig'    THEN 14\n      WHEN '30-tägig'    THEN 30\n      ELSE NULL\n    END::int AS abholzyklus,\n    CASE lower(NULLIF('$pickup_day',''))\n      WHEN 'montag'     THEN 1\n      WHEN 'dienstag'   THEN 2\n      WHEN 'mittwoch'   THEN 3\n      WHEN 'donnerstag' THEN 4\n      WHEN 'freitag'    THEN 5\n      WHEN 'samstag'    THEN 6\n      WHEN 'sonntag'    THEN 7\n      ELSE NULL\n    END AS abholzyklus_tag,\n    COALESCE(NULLIF('$capacity_pct','')::numeric, 100)       AS capacity_pct,\n    NULLIF('$dyn_max_till_empty','')::numeric                AS dyn_max_till_empty\n),\n\nsim AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    (ts AT TIME ZONE 'Europe/Berlin')::date AS day,\n    new_fill_in,\n    MIN((ts AT TIME ZONE 'Europe/Berlin')::date) OVER (PARTITION BY sensor_id, simulation_number) AS start_date\n  FROM sensor_daily_delta\n  WHERE simulation = TRUE\n    AND simulation_number = $simulation\n    AND (ts AT TIME ZONE 'Europe/Berlin')::date <= CURRENT_DATE\n),\n\njoined AS (\n  SELECT\n    s.*,\n    c.abholzyklus,\n    c.abholzyklus_tag,\n    c.capacity_pct,\n    c.dyn_max_till_empty,\n    ((s.day - s.start_date))::int AS days_since_start,\n    (((EXTRACT(dow FROM s.day)::int + 6) % 7) + 1) AS dow_user  -- 1=Mon .. 7=Sun\n  FROM sim s\n  CROSS JOIN cfg c\n),\n\noverall_cum AS (\n  -- Laufende Gesamtsumme (unabhängig vom fixen grp)\n  SELECT\n    j.sensor_id,\n    j.simulation_number,\n    j.day,\n    j.new_fill_in,\n    j.capacity_pct,\n    j.dyn_max_till_empty,\n    SUM(j.new_fill_in) OVER (\n      PARTITION BY j.sensor_id, j.simulation_number\n      ORDER BY j.day\n      ROWS UNBOUNDED PRECEDING\n    ) AS cum_total -- Gesamtsumme , sollte = zu static sein\n  FROM joined j\n),\n\ndyn_logic AS (\n  SELECT\n    o.*,\n    -- Sicherheit: dyn_max > 0\n    CASE WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0\n         THEN NULL\n         ELSE FLOOR(o.cum_total / o.dyn_max_till_empty)\n    END AS dyn_grp_index,  -- steigt um 1 bei jeder Abholung\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0 THEN 0\n      ELSE\n        CASE\n          WHEN FLOOR(o.cum_total / o.dyn_max_till_empty)\n               >\n               FLOOR(\n                 COALESCE(\n                   LAG(o.cum_total) OVER (PARTITION BY o.sensor_id, o.simulation_number ORDER BY o.day),\n                   0\n                 ) / o.dyn_max_till_empty\n               )\n          THEN 1 ELSE 0\n        END\n    END AS pickup_flag_dyn,\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0 THEN NULL\n      ELSE o.cum_total - (FLOOR(o.cum_total / o.dyn_max_till_empty) * o.dyn_max_till_empty)\n    END AS cum_fill_since_last_dyn\n  FROM overall_cum o\n),\n\ndyn_overflow AS (\n  -- Overflow relativ zur dynamischen Füllstandsbilanz \n  SELECT\n    d.*,\n    CASE\n      WHEN d.cum_fill_since_last_dyn IS NOT NULL AND d.capacity_pct IS NOT NULL\n           AND d.cum_fill_since_last_dyn > d.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_day_flag_dyn,\n    CASE\n      WHEN d.cum_fill_since_last_dyn IS NOT NULL AND d.capacity_pct IS NOT NULL\n           AND d.cum_fill_since_last_dyn > d.capacity_pct\n           AND COALESCE(\n                 LAG(d.cum_fill_since_last_dyn) OVER (\n                   PARTITION BY d.sensor_id, d.simulation_number, d.dyn_grp_index\n                   ORDER BY d.day\n                 ), 0\n               ) <= d.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_event_flag_dyn\n  FROM dyn_logic d\n),\n\n\n\ndyn_deltas AS (\n  SELECT\n    d.*,\n    GREATEST(\n      d.dyn_grp_index\n      - COALESCE(\n          LAG(d.dyn_grp_index) OVER (\n            PARTITION BY d.sensor_id, d.simulation_number\n            ORDER BY d.day\n          ), 0\n        ),\n      0\n    ) AS dyn_index_delta\n  FROM dyn_overflow d\n),\n\ndyn_total AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    SUM(dyn_index_delta * dyn_max_till_empty) AS total_disposed_dyn\n  FROM dyn_deltas\n  GROUP BY sensor_id, simulation_number\n),\n\n\ndyn_summary AS (\n  SELECT\n    f.sensor_id,\n    f.simulation_number,\n    SUM(f.pickup_flag_dyn)         AS empties_dyn,\n    MAX(f.dyn_grp_index)           AS dyn_cycles_completed,\n    SUM(f.overflow_event_flag_dyn) AS overflow_events_dyn,\n    SUM(f.overflow_day_flag_dyn)   AS overflow_days_dyn,\n    MAX(c.cum_total)               AS cum_total\n  FROM dyn_overflow f\n  JOIN overall_cum c\n    ON f.sensor_id = c.sensor_id\n   AND f.simulation_number = c.simulation_number\n  GROUP BY f.sensor_id, f.simulation_number\n),\n\nstatistic AS (\n  SELECT\n    d.sensor_id,\n    MAX(d.dyn_grp_index)::bigint AS dyn_grp_index,\n    t.total_disposed_dyn         AS total_disposed,\n    SUM(d.new_fill_in)           AS sum_new_fill_in\n  FROM dyn_overflow d\n  JOIN dyn_total t\n    ON t.sensor_id = d.sensor_id\n   AND t.simulation_number = d.simulation_number\n  GROUP BY d.sensor_id, d.simulation_number, t.total_disposed_dyn\n)\n\nSELECT\n  sensor_id,\n  dyn_grp_index * $cost_per_empty  AS cost_for_empting,\n  total_disposed * $cost_per_volume AS cost_for_volume\nFROM statistic;\n\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Dynamisch: Kosten",
+      "transformations": [
+        {
+          "id": "calculateField",
+          "options": {
+            "alias": "cost",
+            "binary": {
+              "left": {
+                "matcher": {
+                  "id": "byName",
+                  "options": "cost_for_empting"
+                }
+              },
+              "right": {
+                "matcher": {
+                  "id": "byName",
+                  "options": "cost_for_volume"
+                }
+              }
+            },
+            "mode": "binary",
+            "reduce": {
+              "reducer": "sum"
+            }
+          }
+        }
+      ],
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "cf0g6y32klfy8f"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "light-purple",
+            "mode": "fixed"
+          },
+          "decimals": 2,
+          "fieldMinMax": false,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          },
+          "unit": "currencyEUR"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_for_empting"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Kosten für Entleerungsfahrten"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_for_volume"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Volumenbasierte Kosten"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Gesamtkosten"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "semi-dark-purple",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 33
+      },
+      "id": 6,
+      "maxPerRow": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "mean"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cf0g6y32klfy8f"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "hide": false,
+          "rawQuery": true,
+          "rawSql": "-- Grafana variables:\n-- $abholzyklus    (z.B. 'täglich','wöchentlich','10-tägig','14-tägig','30-tägig' oder '')\n-- $abholzyklus_day (z.B. 'Mittwoch')\n-- $simulation     (z.B. 1)\nWITH cfg AS (\n  SELECT\n    CASE\n      lower(NULLIF('$abholzyklus', ''))\n      WHEN 'täglich' THEN 1\n      WHEN 'wöchentlich' THEN 7\n      WHEN '10-tägig' THEN 10\n      WHEN '14-tägig' THEN 14\n      WHEN '30-tägig' THEN 30\n      ELSE NULL\n    END :: int AS abholzyklus,\n    CASE\n      lower(NULLIF('$pickup_day', ''))\n      WHEN 'montag' THEN 1\n      WHEN 'dienstag' THEN 2\n      WHEN 'mittwoch' THEN 3\n      WHEN 'donnerstag' THEN 4\n      WHEN 'freitag' THEN 5\n      WHEN 'samstag' THEN 6\n      WHEN 'sonntag' THEN 7\n      ELSE NULL\n    END AS abholzyklus_tag\n),\n\nsim AS (\n  -- Datumsebene aus sensor_daily_delta\n  SELECT\n    sensor_id,\n    simulation_number,\n    (ts AT TIME ZONE 'Europe/Berlin') :: date AS day,\n    new_fill_in,\n    MIN((ts AT TIME ZONE 'Europe/Berlin') :: date) OVER (PARTITION BY sensor_id, simulation_number) AS start_date\n  FROM\n    sensor_daily_delta\n  WHERE\n    simulation = TRUE\n    AND simulation_number = $simulation\n    AND (ts AT TIME ZONE 'Europe/Berlin') :: date <= CURRENT_DATE -- AND sensor_id = 'Simu001'   -- optional: zum Testen aktivieren\n),\n\njoined AS (\n  -- cfg per CROSS JOIN in jede Zeile ziehen und Hilfsspalten berechnen\n  SELECT\n    s.*,\n    c.abholzyklus,\n    c.abholzyklus_tag,\n    ((s.day - s.start_date)) :: int AS days_since_start,\n    -- dow_user: 1=Mon .. 7=Sun\n    (\n      (\n        (\n          EXTRACT(\n            dow\n            FROM\n              s.day\n          ) :: int + 6\n        ) % 7\n      ) + 1\n    ) AS dow_user\n  FROM\n    sim s\n    CROSS JOIN cfg c\n),\n-- erstes days_since_start finden, an dem der gewählte Wochentag auftritt\nfirst_emptied AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    MIN(days_since_start) FILTER (\n      WHERE\n        dow_user = abholzyklus_tag\n    ) AS first_emptied\n  FROM\n    joined\n  GROUP BY\n    sensor_id,\n    simulation_number\n),\n\n-- pickup-Logik: erstes Mal = days_since_start == first_emptied,\n-- danach: (days_since_start - first_emptied) % abholzyklus = 0 (wenn abholzyklus gesetzt)\nmarked AS (\n  SELECT\n    j.*,\n    fe.first_emptied,\n    CASE\n      WHEN fe.first_emptied IS NOT NULL\n      AND j.days_since_start = fe.first_emptied THEN 1\n      WHEN fe.first_emptied IS NOT NULL\n      AND j.abholzyklus IS NOT NULL\n      AND j.abholzyklus > 0\n      AND j.days_since_start >= fe.first_emptied\n      AND (\n        (j.days_since_start - fe.first_emptied) % j.abholzyklus\n      ) = 0 THEN 1\n      ELSE 0\n    END AS pickup_flag\n  FROM\n    joined j\n    LEFT JOIN first_emptied fe USING (sensor_id, simulation_number)\n  ORDER BY\n    j.sensor_id,\n    j.simulation_number,\n    j.day\n),\n\ngrp_calc AS (\n  SELECT\n    *,\n    SUM(pickup_flag) OVER (\n      PARTITION BY sensor_id,\n      simulation_number\n      ORDER BY\n        day\n    ) AS grp\n  FROM\n    marked\n),\n\ngrp_and_cum AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    day,\n    new_fill_in,\n    pickup_flag,\n    grp,\n    days_since_start,\n    first_emptied,\n    abholzyklus,\n    abholzyklus_tag,\n    SUM(new_fill_in) OVER (\n      PARTITION BY sensor_id,\n      simulation_number,\n      grp\n      ORDER BY\n        day\n    ) AS cum_fill_since_last_pickup\n  FROM\n    grp_calc\n), \n\nsumup AS (\n  SELECT\n    sensor_id,\n    SUM(cum_fill_since_last_pickup) FILTER (\n      WHERE\n        ((days_since_start - first_emptied) % abholzyklus) = abholzyklus -1\n    ) OVER (PARTITION BY sensor_id, simulation_number) AS total_emptied_volumen_per_sensor,\n    COUNT(*) FILTER (\n      WHERE\n        pickup_flag = 1\n    ) OVER (PARTITION BY sensor_id, simulation_number) AS number_of_emptied_per_sensor,\n    SUM(new_fill_in) OVER (PARTITION BY sensor_id, simulation_number) AS sum_total_volumen_per_sensor\n  FROM\n    grp_and_cum\n)\nSELECT\n  sensor_id,\n  number_of_emptied_per_sensor * $cost_per_empty AS cost_for_empting,\n  total_emptied_volumen_per_sensor * $cost_per_volume AS cost_for_volume\nFROM\n  sumup",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Statisch: Kosten",
+      "transformations": [
+        {
+          "id": "calculateField",
+          "options": {
+            "alias": "cost",
+            "binary": {
+              "left": {
+                "matcher": {
+                  "id": "byName",
+                  "options": "cost_for_empting"
+                }
+              },
+              "right": {
+                "matcher": {
+                  "id": "byName",
+                  "options": "cost_for_volume"
+                }
+              }
+            },
+            "mode": "binary",
+            "reduce": {
+              "reducer": "sum"
+            }
+          }
+        }
+      ],
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "cf0g6y32klfy8f"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "anzahl_der_Überschreitungen"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Anzahl der Überschreitungen"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "anzahl_der_überschrittenen_tage"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Anzahl der überschrittenen Tage"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "over_flow_kosten"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Kosten durch Überfüllung"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyEUR"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "semi-dark-blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 0,
+        "y": 37
+      },
+      "id": 8,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "mean"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cf0g6y32klfy8f"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "-- Grafana variables:\n-- $abholzyklus\n-- $abholzyklus_day\n-- $simulation\n-- $capacity_pct   (optional; Standard 100)\n-- $dyn_max_till_empty  -- z.B. 90 oder 100 (Pflicht für dynamische Abholung)\n\nWITH cfg AS (\n  SELECT\n    CASE lower(NULLIF('$abholzyklus',''))\n      WHEN 'täglich'     THEN 1\n      WHEN 'wöchentlich' THEN 7\n      WHEN '10-tägig'    THEN 10\n      WHEN '14-tägig'    THEN 14\n      WHEN '30-tägig'    THEN 30\n      ELSE NULL\n    END::int AS abholzyklus,\n    CASE lower(NULLIF('$pickup_day',''))\n      WHEN 'montag'     THEN 1\n      WHEN 'dienstag'   THEN 2\n      WHEN 'mittwoch'   THEN 3\n      WHEN 'donnerstag' THEN 4\n      WHEN 'freitag'    THEN 5\n      WHEN 'samstag'    THEN 6\n      WHEN 'sonntag'    THEN 7\n      ELSE NULL\n    END AS abholzyklus_tag,\n    COALESCE(NULLIF('$capacity_pct','')::numeric, 100)       AS capacity_pct,\n    NULLIF('$dyn_max_till_empty','')::numeric                AS dyn_max_till_empty\n),\n\nsim AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    (ts AT TIME ZONE 'Europe/Berlin')::date AS day,\n    new_fill_in,\n    MIN((ts AT TIME ZONE 'Europe/Berlin')::date) OVER (PARTITION BY sensor_id, simulation_number) AS start_date\n  FROM sensor_daily_delta\n  WHERE simulation = TRUE\n    AND simulation_number = $simulation\n    AND (ts AT TIME ZONE 'Europe/Berlin')::date <= CURRENT_DATE\n),\n\njoined AS (\n  SELECT\n    s.*,\n    c.abholzyklus,\n    c.abholzyklus_tag,\n    c.capacity_pct,\n    c.dyn_max_till_empty,\n    ((s.day - s.start_date))::int AS days_since_start,\n    (((EXTRACT(dow FROM s.day)::int + 6) % 7) + 1) AS dow_user  -- 1=Mon .. 7=Sun\n  FROM sim s\n  CROSS JOIN cfg c\n),\n\noverall_cum AS (\n  -- Laufende Gesamtsumme (unabhängig vom fixen grp)\n  SELECT\n    j.sensor_id,\n    j.simulation_number,\n    j.day,\n    j.new_fill_in,\n    j.capacity_pct,\n    j.dyn_max_till_empty,\n    SUM(j.new_fill_in) OVER (\n      PARTITION BY j.sensor_id, j.simulation_number\n      ORDER BY j.day\n      ROWS UNBOUNDED PRECEDING\n    ) AS cum_total -- Gesamtsumme , sollte = zu static sein\n  FROM joined j\n),\n\ndyn_logic AS (\n  SELECT\n    o.*,\n    -- Sicherheit: dyn_max > 0\n    CASE WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0\n         THEN NULL\n         ELSE FLOOR(o.cum_total / o.dyn_max_till_empty)\n    END AS dyn_grp_index,  -- steigt um 1 bei jeder Abholung\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0 THEN 0\n      ELSE\n        CASE\n          WHEN FLOOR(o.cum_total / o.dyn_max_till_empty)\n               >\n               FLOOR(\n                 COALESCE(\n                   LAG(o.cum_total) OVER (PARTITION BY o.sensor_id, o.simulation_number ORDER BY o.day),\n                   0\n                 ) / o.dyn_max_till_empty\n               )\n          THEN 1 ELSE 0\n        END\n    END AS pickup_flag_dyn,\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0 THEN NULL\n      ELSE o.cum_total - (FLOOR(o.cum_total / o.dyn_max_till_empty) * o.dyn_max_till_empty)\n    END AS cum_fill_since_last_dyn\n  FROM overall_cum o\n),\n\ndyn_overflow AS (\n  -- Overflow relativ zur dynamischen Füllstandsbilanz \n  SELECT\n    d.*,\n    CASE\n      WHEN d.cum_fill_since_last_dyn IS NOT NULL AND d.capacity_pct IS NOT NULL\n           AND d.cum_fill_since_last_dyn > d.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_day_flag_dyn,\n    CASE\n      WHEN d.cum_fill_since_last_dyn IS NOT NULL AND d.capacity_pct IS NOT NULL\n           AND d.cum_fill_since_last_dyn > d.capacity_pct\n           AND COALESCE(\n                 LAG(d.cum_fill_since_last_dyn) OVER (\n                   PARTITION BY d.sensor_id, d.simulation_number, d.dyn_grp_index\n                   ORDER BY d.day\n                 ), 0\n               ) <= d.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_event_flag_dyn\n  FROM dyn_logic d\n),\n\noverflow_sum AS(\n  SELECT \n    sensor_id,\n    simulation_number,\n    SUM(overflow_event_flag_dyn) AS overflow_events,\n    SUM(overflow_day_flag_dyn) AS overflow_days\n  FROM dyn_overflow\n  GROUP BY sensor_id, simulation_number\n)\n\nSELECT\n  m.sensor_id,\n  m.overflow_events AS Anzahl_der_Überschreitungen,\n  m.overflow_days AS Anzahl_der_überschrittenen_Tage,\n  m.overflow_days * $overflow_cost AS Over_Flow_Kosten\nFROM overflow_sum m\nORDER BY m.sensor_id",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Dynamische Entsorgung - Überfüllung",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "cf0g6y32klfy8f"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "light-purple",
+            "mode": "fixed"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "over_flow_kosten"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyEUR"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "anzahl_Überschreitungen"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Anzahl der Überschreitungen"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "anzahl_der_überschrittenen_tage"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Anzahl der überschrittenen Tage"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "over_flow_kosten"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Kosten durch Überfüllung"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "semi-dark-purple",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 37
+      },
+      "id": 14,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "mean"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cf0g6y32klfy8f"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "-- Grafana variables:\n-- $abholzyklus    (z.B. 'täglich','wöchentlich','10-tägig','14-tägig','30-tägig' oder '')\n-- $abholzyklus_day (z.B. 'Mittwoch')\n-- $simulation     (z.B. 1)\n-- $capacity_pct   (optional; Standard 100)\n\nWITH cfg AS (\n  SELECT\n    CASE lower(NULLIF('$abholzyklus',''))\n      WHEN 'täglich'     THEN 1\n      WHEN 'wöchentlich' THEN 7\n      WHEN '10-tägig'    THEN 10\n      WHEN '14-tägig'    THEN 14\n      WHEN '30-tägig'    THEN 30\n      ELSE NULL\n    END::int AS abholzyklus,\n    CASE lower(NULLIF('$pickup_day',''))\n      WHEN 'montag'     THEN 1\n      WHEN 'dienstag'   THEN 2\n      WHEN 'mittwoch'   THEN 3\n      WHEN 'donnerstag' THEN 4\n      WHEN 'freitag'    THEN 5\n      WHEN 'samstag'    THEN 6\n      WHEN 'sonntag'    THEN 7\n      ELSE NULL\n    END AS abholzyklus_tag,\n    COALESCE(NULLIF('$capacity_pct','')::int, 100) AS capacity_pct\n),\n\nsim AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    (ts AT TIME ZONE 'Europe/Berlin')::date AS day,\n    new_fill_in,\n    MIN((ts AT TIME ZONE 'Europe/Berlin')::date) OVER (PARTITION BY sensor_id, simulation_number) AS start_date\n  FROM sensor_daily_delta\n  WHERE simulation = TRUE\n    AND simulation_number = $simulation\n    AND (ts AT TIME ZONE 'Europe/Berlin')::date <= CURRENT_DATE\n),\n\njoined AS (\n  SELECT\n    s.*,\n    c.abholzyklus,\n    c.abholzyklus_tag,\n    c.capacity_pct,\n    ((s.day - s.start_date))::int AS days_since_start,\n    (((EXTRACT(dow FROM s.day)::int + 6) % 7) + 1) AS dow_user  -- 1=Mon .. 7=Sun\n  FROM sim s\n  CROSS JOIN cfg c\n),\n\nfirst_emptied AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    MIN(days_since_start) FILTER (WHERE dow_user = abholzyklus_tag) AS first_emptied\n  FROM joined\n  GROUP BY sensor_id, simulation_number\n),\n\nmarked AS (\n  SELECT\n    j.*,\n    fe.first_emptied,\n    CASE\n      WHEN fe.first_emptied IS NOT NULL\n       AND j.days_since_start = fe.first_emptied\n      THEN 1\n      WHEN fe.first_emptied IS NOT NULL\n       AND j.abholzyklus IS NOT NULL\n       AND j.abholzyklus > 0\n       AND j.days_since_start >= fe.first_emptied\n       AND ((j.days_since_start - fe.first_emptied) % j.abholzyklus) = 0\n      THEN 1\n      ELSE 0\n    END AS pickup_flag\n  FROM joined j\n  LEFT JOIN first_emptied fe USING (sensor_id, simulation_number)\n  ORDER BY j.sensor_id, j.simulation_number, j.day\n),\n\ngrp_calc AS (\n  SELECT\n    *,\n    SUM(pickup_flag) OVER (PARTITION BY sensor_id, simulation_number ORDER BY day) AS grp\n  FROM marked\n),\n\ngrp_and_cum AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    day,\n    new_fill_in,\n    pickup_flag,\n    grp,\n    days_since_start,\n    first_emptied,\n    abholzyklus,\n    abholzyklus_tag,\n    capacity_pct,\n    SUM(new_fill_in) OVER (PARTITION BY sensor_id, simulation_number, grp ORDER BY day) AS cum_fill_since_last_pickup\n  FROM grp_calc\n),\n\n-- Overflow-Flags: (a) jeder Tag > Kapazität, (b) erste Überschreitung pro grp (= Overflow-Event)\noverflow_marked AS (\n  SELECT\n    g.*,\n    CASE WHEN g.cum_fill_since_last_pickup > g.capacity_pct THEN 1 ELSE 0 END AS overflow_day_flag,\n    CASE\n      WHEN g.cum_fill_since_last_pickup > g.capacity_pct\n       AND COALESCE(\n             LAG(g.cum_fill_since_last_pickup) OVER (\n               PARTITION BY g.sensor_id, g.simulation_number, g.grp\n               ORDER BY g.day\n             ), 0\n           ) <= g.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_event_flag\n  FROM grp_and_cum g\n),\n\n-- Zählung pro Sensor/Simulation\noverflow_sum AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    SUM(overflow_event_flag) AS overflow_events,  -- \"wie oft es passiert\"\n    SUM(overflow_day_flag)  AS overflow_days     -- optional: Anzahl Tage im Overflow\n  FROM overflow_marked\n  GROUP BY sensor_id, simulation_number\n)\n\n-- Verlauf (wie bisher, nur mit Overflow-Infos)\nSELECT\n  m.sensor_id,\n  m.overflow_events AS Anzahl_Überschreitungen,\n  m.overflow_days AS Anzahl_der_überschrittenen_Tage,\n  m.overflow_days * $overflow_cost AS Over_Flow_Kosten\nFROM overflow_sum m\nORDER BY m.sensor_id\n\n\n-- Für eine kompakte Zählung je Sensor/Simulation (optional extra ausführen):\n-- SELECT * FROM overflow_sum ORDER BY sensor_id;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Statische Entsorgung - Überfüllung",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      },
+      "id": 11,
+      "panels": [],
+      "title": "Dynamische Entsorgung",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "cf0g6y32klfy8f"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2,
+          "fieldMinMax": false,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          },
+          "unit": "currencyEUR"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_for_empting"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Kosten für Entleerungsfahrten"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_for_volume"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Volumenbasierte Kosten"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Gesamtkosten"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "semi-dark-blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 0,
+        "y": 42
+      },
+      "id": 21,
+      "maxPerRow": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "min"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cf0g6y32klfy8f"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "hide": false,
+          "rawQuery": true,
+          "rawSql": "-- Grafana variables:\n-- $abholzyklus\n-- $abholzyklus_day\n-- $simulation\n-- $capacity_pct   (optional; Standard 100)\n-- $dyn_max_till_empty  -- z.B. 90 oder 100 (Pflicht für dynamische Abholung)\n\nWITH cfg AS (\n  SELECT\n    CASE lower(NULLIF('$abholzyklus',''))\n      WHEN 'täglich'     THEN 1\n      WHEN 'wöchentlich' THEN 7\n      WHEN '10-tägig'    THEN 10\n      WHEN '14-tägig'    THEN 14\n      WHEN '30-tägig'    THEN 30\n      ELSE NULL\n    END::int AS abholzyklus,\n    CASE lower(NULLIF('$pickup_day',''))\n      WHEN 'montag'     THEN 1\n      WHEN 'dienstag'   THEN 2\n      WHEN 'mittwoch'   THEN 3\n      WHEN 'donnerstag' THEN 4\n      WHEN 'freitag'    THEN 5\n      WHEN 'samstag'    THEN 6\n      WHEN 'sonntag'    THEN 7\n      ELSE NULL\n    END AS abholzyklus_tag,\n    COALESCE(NULLIF('$capacity_pct','')::numeric, 100)       AS capacity_pct,\n    NULLIF('$dyn_max_till_empty','')::numeric                AS dyn_max_till_empty\n),\n\nsim AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    (ts AT TIME ZONE 'Europe/Berlin')::date AS day,\n    new_fill_in,\n    MIN((ts AT TIME ZONE 'Europe/Berlin')::date) OVER (PARTITION BY sensor_id, simulation_number) AS start_date\n  FROM sensor_daily_delta\n  WHERE simulation = TRUE\n    AND simulation_number = $simulation\n    AND (ts AT TIME ZONE 'Europe/Berlin')::date <= CURRENT_DATE\n),\n\njoined AS (\n  SELECT\n    s.*,\n    c.abholzyklus,\n    c.abholzyklus_tag,\n    c.capacity_pct,\n    c.dyn_max_till_empty,\n    ((s.day - s.start_date))::int AS days_since_start,\n    (((EXTRACT(dow FROM s.day)::int + 6) % 7) + 1) AS dow_user  -- 1=Mon .. 7=Sun\n  FROM sim s\n  CROSS JOIN cfg c\n),\n\noverall_cum AS (\n  -- Laufende Gesamtsumme (unabhängig vom fixen grp)\n  SELECT\n    j.sensor_id,\n    j.simulation_number,\n    j.day,\n    j.new_fill_in,\n    j.capacity_pct,\n    j.dyn_max_till_empty,\n    SUM(j.new_fill_in) OVER (\n      PARTITION BY j.sensor_id, j.simulation_number\n      ORDER BY j.day\n      ROWS UNBOUNDED PRECEDING\n    ) AS cum_total -- Gesamtsumme , sollte = zu static sein\n  FROM joined j\n),\n\ndyn_logic AS (\n  SELECT\n    o.*,\n    -- Sicherheit: dyn_max > 0\n    CASE WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0\n         THEN NULL\n         ELSE FLOOR(o.cum_total / o.dyn_max_till_empty)\n    END AS dyn_grp_index,  -- steigt um 1 bei jeder Abholung\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0 THEN 0\n      ELSE\n        CASE\n          WHEN FLOOR(o.cum_total / o.dyn_max_till_empty)\n               >\n               FLOOR(\n                 COALESCE(\n                   LAG(o.cum_total) OVER (PARTITION BY o.sensor_id, o.simulation_number ORDER BY o.day),\n                   0\n                 ) / o.dyn_max_till_empty\n               )\n          THEN 1 ELSE 0\n        END\n    END AS pickup_flag_dyn,\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0 THEN NULL\n      ELSE o.cum_total - (FLOOR(o.cum_total / o.dyn_max_till_empty) * o.dyn_max_till_empty)\n    END AS cum_fill_since_last_dyn\n  FROM overall_cum o\n),\n\ndyn_overflow AS (\n  -- Overflow relativ zur dynamischen Füllstandsbilanz \n  SELECT\n    d.*,\n    CASE\n      WHEN d.cum_fill_since_last_dyn IS NOT NULL AND d.capacity_pct IS NOT NULL\n           AND d.cum_fill_since_last_dyn > d.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_day_flag_dyn,\n    CASE\n      WHEN d.cum_fill_since_last_dyn IS NOT NULL AND d.capacity_pct IS NOT NULL\n           AND d.cum_fill_since_last_dyn > d.capacity_pct\n           AND COALESCE(\n                 LAG(d.cum_fill_since_last_dyn) OVER (\n                   PARTITION BY d.sensor_id, d.simulation_number, d.dyn_grp_index\n                   ORDER BY d.day\n                 ), 0\n               ) <= d.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_event_flag_dyn\n  FROM dyn_logic d\n),\n\n\n\ndyn_deltas AS (\n  SELECT\n    d.*,\n    GREATEST(\n      d.dyn_grp_index\n      - COALESCE(\n          LAG(d.dyn_grp_index) OVER (\n            PARTITION BY d.sensor_id, d.simulation_number\n            ORDER BY d.day\n          ), 0\n        ),\n      0\n    ) AS dyn_index_delta\n  FROM dyn_overflow d\n),\n\ndyn_total AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    SUM(dyn_index_delta * dyn_max_till_empty) AS total_disposed_dyn\n  FROM dyn_deltas\n  GROUP BY sensor_id, simulation_number\n),\n\n\ndyn_summary AS (\n  SELECT\n    f.sensor_id,\n    f.simulation_number,\n    SUM(f.pickup_flag_dyn)         AS empties_dyn,\n    MAX(f.dyn_grp_index)           AS dyn_cycles_completed,\n    SUM(f.overflow_event_flag_dyn) AS overflow_events_dyn,\n    SUM(f.overflow_day_flag_dyn)   AS overflow_days_dyn,\n    MAX(c.cum_total)               AS cum_total\n  FROM dyn_overflow f\n  JOIN overall_cum c\n    ON f.sensor_id = c.sensor_id\n   AND f.simulation_number = c.simulation_number\n  GROUP BY f.sensor_id, f.simulation_number\n),\n\nstatistic AS (\n  SELECT\n    d.sensor_id,\n    MAX(d.dyn_grp_index)::bigint AS dyn_grp_index,\n    t.total_disposed_dyn         AS total_disposed,\n    SUM(d.new_fill_in)           AS sum_new_fill_in\n  FROM dyn_overflow d\n  JOIN dyn_total t\n    ON t.sensor_id = d.sensor_id\n   AND t.simulation_number = d.simulation_number\n  GROUP BY d.sensor_id, d.simulation_number, t.total_disposed_dyn\n)\n\nSELECT\n  sensor_id,\n  dyn_grp_index * $cost_per_empty  AS cost_for_empting,\n  total_disposed * $cost_per_volume AS cost_for_volume\nFROM statistic\nWHERE sensor_id = '$sensor_ids'\n\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Dynamisch: Kosten",
+      "transformations": [
+        {
+          "id": "calculateField",
+          "options": {
+            "alias": "cost",
+            "binary": {
+              "left": {
+                "matcher": {
+                  "id": "byName",
+                  "options": "cost_for_empting"
+                }
+              },
+              "right": {
+                "matcher": {
+                  "id": "byName",
+                  "options": "cost_for_volume"
+                }
+              }
+            },
+            "mode": "binary",
+            "reduce": {
+              "reducer": "sum"
+            }
+          }
+        }
+      ],
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "cf0g6y32klfy8f"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "anzahl_der_Überschreitungen"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Anzahl der Überschreitungen"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "anzahl_der_überschrittenen_tage"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Anzahl der überschrittenen Tage"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "light-blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "over_flow_kosten"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Kosten durch Überfüllung"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "currencyEUR"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "semi-dark-blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 42
+      },
+      "id": 23,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cf0g6y32klfy8f"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "-- Grafana variables:\n-- $abholzyklus\n-- $abholzyklus_day\n-- $simulation\n-- $capacity_pct   (optional; Standard 100)\n-- $dyn_max_till_empty  -- z.B. 90 oder 100 (Pflicht für dynamische Abholung)\n\nWITH cfg AS (\n  SELECT\n    CASE lower(NULLIF('$abholzyklus',''))\n      WHEN 'täglich'     THEN 1\n      WHEN 'wöchentlich' THEN 7\n      WHEN '10-tägig'    THEN 10\n      WHEN '14-tägig'    THEN 14\n      WHEN '30-tägig'    THEN 30\n      ELSE NULL\n    END::int AS abholzyklus,\n    CASE lower(NULLIF('$pickup_day',''))\n      WHEN 'montag'     THEN 1\n      WHEN 'dienstag'   THEN 2\n      WHEN 'mittwoch'   THEN 3\n      WHEN 'donnerstag' THEN 4\n      WHEN 'freitag'    THEN 5\n      WHEN 'samstag'    THEN 6\n      WHEN 'sonntag'    THEN 7\n      ELSE NULL\n    END AS abholzyklus_tag,\n    COALESCE(NULLIF('$capacity_pct','')::numeric, 100)       AS capacity_pct,\n    NULLIF('$dyn_max_till_empty','')::numeric                AS dyn_max_till_empty\n),\n\nsim AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    (ts AT TIME ZONE 'Europe/Berlin')::date AS day,\n    new_fill_in,\n    MIN((ts AT TIME ZONE 'Europe/Berlin')::date) OVER (PARTITION BY sensor_id, simulation_number) AS start_date\n  FROM sensor_daily_delta\n  WHERE simulation = TRUE\n    AND simulation_number = $simulation\n    AND (ts AT TIME ZONE 'Europe/Berlin')::date <= CURRENT_DATE\n),\n\njoined AS (\n  SELECT\n    s.*,\n    c.abholzyklus,\n    c.abholzyklus_tag,\n    c.capacity_pct,\n    c.dyn_max_till_empty,\n    ((s.day - s.start_date))::int AS days_since_start,\n    (((EXTRACT(dow FROM s.day)::int + 6) % 7) + 1) AS dow_user  -- 1=Mon .. 7=Sun\n  FROM sim s\n  CROSS JOIN cfg c\n),\n\noverall_cum AS (\n  -- Laufende Gesamtsumme (unabhängig vom fixen grp)\n  SELECT\n    j.sensor_id,\n    j.simulation_number,\n    j.day,\n    j.new_fill_in,\n    j.capacity_pct,\n    j.dyn_max_till_empty,\n    SUM(j.new_fill_in) OVER (\n      PARTITION BY j.sensor_id, j.simulation_number\n      ORDER BY j.day\n      ROWS UNBOUNDED PRECEDING\n    ) AS cum_total -- Gesamtsumme , sollte = zu static sein\n  FROM joined j\n),\n\ndyn_logic AS (\n  SELECT\n    o.*,\n    -- Sicherheit: dyn_max > 0\n    CASE WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0\n         THEN NULL\n         ELSE FLOOR(o.cum_total / o.dyn_max_till_empty)\n    END AS dyn_grp_index,  -- steigt um 1 bei jeder Abholung\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0 THEN 0\n      ELSE\n        CASE\n          WHEN FLOOR(o.cum_total / o.dyn_max_till_empty)\n               >\n               FLOOR(\n                 COALESCE(\n                   LAG(o.cum_total) OVER (PARTITION BY o.sensor_id, o.simulation_number ORDER BY o.day),\n                   0\n                 ) / o.dyn_max_till_empty\n               )\n          THEN 1 ELSE 0\n        END\n    END AS pickup_flag_dyn,\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0 THEN NULL\n      ELSE o.cum_total - (FLOOR(o.cum_total / o.dyn_max_till_empty) * o.dyn_max_till_empty)\n    END AS cum_fill_since_last_dyn\n  FROM overall_cum o\n),\n\ndyn_overflow AS (\n  -- Overflow relativ zur dynamischen Füllstandsbilanz \n  SELECT\n    d.*,\n    CASE\n      WHEN d.cum_fill_since_last_dyn IS NOT NULL AND d.capacity_pct IS NOT NULL\n           AND d.cum_fill_since_last_dyn > d.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_day_flag_dyn,\n    CASE\n      WHEN d.cum_fill_since_last_dyn IS NOT NULL AND d.capacity_pct IS NOT NULL\n           AND d.cum_fill_since_last_dyn > d.capacity_pct\n           AND COALESCE(\n                 LAG(d.cum_fill_since_last_dyn) OVER (\n                   PARTITION BY d.sensor_id, d.simulation_number, d.dyn_grp_index\n                   ORDER BY d.day\n                 ), 0\n               ) <= d.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_event_flag_dyn\n  FROM dyn_logic d\n),\n\noverflow_sum AS(\n  SELECT \n    sensor_id,\n    simulation_number,\n    SUM(overflow_event_flag_dyn) AS overflow_events,\n    SUM(overflow_day_flag_dyn) AS overflow_days\n  FROM dyn_overflow\n  GROUP BY sensor_id, simulation_number\n)\n\nSELECT\n  m.sensor_id,\n  m.overflow_events AS Anzahl_der_Überschreitungen,\n  m.overflow_days AS Anzahl_der_überschrittenen_Tage,\n  m.overflow_days * $overflow_cost AS Over_Flow_Kosten\nFROM overflow_sum m\nWHERE sensor_id = '$sensor_ids'\nORDER BY m.sensor_id",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Dynamische Entsorgung - Überfüllung",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "cf0g6y32klfy8f"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "dyn_grp_index"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Anzahl der Entsorgungen"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "total_disposed"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Entsorgter Abfall"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sum_new_fill_in"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Gesamtmenge angefallener Abfall"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 24,
+        "x": 0,
+        "y": 46
+      },
+      "id": 12,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cf0g6y32klfy8f"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "-- Grafana variables:\n-- $abholzyklus\n-- $abholzyklus_day\n-- $simulation\n-- $capacity_pct   (optional; Standard 100)\n-- $dyn_max_till_empty  -- z.B. 90 oder 100 (Pflicht für dynamische Abholung)\n\nWITH cfg AS (\n  SELECT\n    CASE lower(NULLIF('$abholzyklus',''))\n      WHEN 'täglich'     THEN 1\n      WHEN 'wöchentlich' THEN 7\n      WHEN '10-tägig'    THEN 10\n      WHEN '14-tägig'    THEN 14\n      WHEN '30-tägig'    THEN 30\n      ELSE NULL\n    END::int AS abholzyklus,\n    CASE lower(NULLIF('$pickup_day',''))\n      WHEN 'montag'     THEN 1\n      WHEN 'dienstag'   THEN 2\n      WHEN 'mittwoch'   THEN 3\n      WHEN 'donnerstag' THEN 4\n      WHEN 'freitag'    THEN 5\n      WHEN 'samstag'    THEN 6\n      WHEN 'sonntag'    THEN 7\n      ELSE NULL\n    END AS abholzyklus_tag,\n    COALESCE(NULLIF('$capacity_pct','')::numeric, 100)       AS capacity_pct,\n    NULLIF('$dyn_max_till_empty','')::numeric                AS dyn_max_till_empty\n),\n\nsim AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    (ts AT TIME ZONE 'Europe/Berlin')::date AS day,\n    new_fill_in,\n    MIN((ts AT TIME ZONE 'Europe/Berlin')::date) OVER (PARTITION BY sensor_id, simulation_number) AS start_date\n  FROM sensor_daily_delta\n  WHERE simulation = TRUE\n    AND simulation_number = $simulation\n    AND (ts AT TIME ZONE 'Europe/Berlin')::date <= CURRENT_DATE\n),\n\njoined AS (\n  SELECT\n    s.*,\n    c.abholzyklus,\n    c.abholzyklus_tag,\n    c.capacity_pct,\n    c.dyn_max_till_empty,\n    ((s.day - s.start_date))::int AS days_since_start,\n    (((EXTRACT(dow FROM s.day)::int + 6) % 7) + 1) AS dow_user  -- 1=Mon .. 7=Sun\n  FROM sim s\n  CROSS JOIN cfg c\n),\n\noverall_cum AS (\n  -- Laufende Gesamtsumme (unabhängig vom fixen grp)\n  SELECT\n    j.sensor_id,\n    j.simulation_number,\n    j.day,\n    j.new_fill_in,\n    j.capacity_pct,\n    j.dyn_max_till_empty,\n    SUM(j.new_fill_in) OVER (\n      PARTITION BY j.sensor_id, j.simulation_number\n      ORDER BY j.day\n      ROWS UNBOUNDED PRECEDING\n    ) AS cum_total -- Gesamtsumme , sollte = zu static sein\n  FROM joined j\n),\n\ndyn_logic AS (\n  SELECT\n    o.*,\n    -- Sicherheit: dyn_max > 0\n    CASE WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0\n         THEN NULL\n         ELSE FLOOR(o.cum_total / o.dyn_max_till_empty)\n    END AS dyn_grp_index,  -- steigt um 1 bei jeder Abholung\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0 THEN 0\n      ELSE\n        CASE\n          WHEN FLOOR(o.cum_total / o.dyn_max_till_empty)\n               >\n               FLOOR(\n                 COALESCE(\n                   LAG(o.cum_total) OVER (PARTITION BY o.sensor_id, o.simulation_number ORDER BY o.day),\n                   0\n                 ) / o.dyn_max_till_empty\n               )\n          THEN 1 ELSE 0\n        END\n    END AS pickup_flag_dyn,\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0 THEN NULL\n      ELSE o.cum_total - (FLOOR(o.cum_total / o.dyn_max_till_empty) * o.dyn_max_till_empty)\n    END AS cum_fill_since_last_dyn\n  FROM overall_cum o\n),\n\ndyn_overflow AS (\n  -- Overflow relativ zur dynamischen Füllstandsbilanz \n  SELECT\n    d.*,\n    CASE\n      WHEN d.cum_fill_since_last_dyn IS NOT NULL AND d.capacity_pct IS NOT NULL\n           AND d.cum_fill_since_last_dyn > d.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_day_flag_dyn,\n    CASE\n      WHEN d.cum_fill_since_last_dyn IS NOT NULL AND d.capacity_pct IS NOT NULL\n           AND d.cum_fill_since_last_dyn > d.capacity_pct\n           AND COALESCE(\n                 LAG(d.cum_fill_since_last_dyn) OVER (\n                   PARTITION BY d.sensor_id, d.simulation_number, d.dyn_grp_index\n                   ORDER BY d.day\n                 ), 0\n               ) <= d.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_event_flag_dyn\n  FROM dyn_logic d\n),\n\n\n\ndyn_deltas AS (\n  SELECT\n    d.*,\n    GREATEST(\n      d.dyn_grp_index\n      - COALESCE(\n          LAG(d.dyn_grp_index) OVER (\n            PARTITION BY d.sensor_id, d.simulation_number\n            ORDER BY d.day\n          ), 0\n        ),\n      0\n    ) AS dyn_index_delta\n  FROM dyn_overflow d\n),\n\ndyn_total AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    SUM(dyn_index_delta * dyn_max_till_empty) AS total_disposed_dyn\n  FROM dyn_deltas\n  GROUP BY sensor_id, simulation_number\n),\n\n\ndyn_summary AS (\n  SELECT\n    f.sensor_id,\n    f.simulation_number,\n    SUM(f.pickup_flag_dyn)        AS empties_dyn,\n    MAX(f.dyn_grp_index)          AS dyn_cycles_completed, -- ~ entspricht empties_dyn\n    SUM(f.overflow_event_flag_dyn) AS overflow_events_dyn,\n    SUM(f.overflow_day_flag_dyn)   AS overflow_days_dyn,\n    MAX(c.cum_total)                AS cum_total\n  FROM dyn_overflow f JOIN overall_cum c ON f.sensor_id = c.sensor_id AND f.simulation_number = c.simulation_number\n  GROUP BY f.sensor_id, f.simulation_number\n)\n\nSELECT\n  d.sensor_id,\n  --d.simulation_number,\n  --MAX(d.cum_total)                                AS cum_total,\n  MAX(d.dyn_grp_index)::bigint                    AS dyn_grp_index,          -- letzter/aktueller Zyklusstand\n  t.total_disposed_dyn                            AS total_disposed,         -- Summe entsorgter Menge (dynamisch)\n  SUM(d.new_fill_in)                              AS sum_new_fill_in         -- Summe des erzeugten Volumens\nFROM dyn_overflow d\nJOIN dyn_total t\n  ON t.sensor_id = d.sensor_id\n AND t.simulation_number = d.simulation_number\nGROUP BY d.sensor_id, d.simulation_number, t.total_disposed_dyn\nORDER BY d.sensor_id;\n\n\n/* --- Optional: kompakte Zählwerte je Sensor --- \nSELECT * FROM dyn_summary ORDER BY sensor_id;\n*/\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Dynamisch: Volumen und Abholungen",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "cf0g6y32klfy8f"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 49
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cf0g6y32klfy8f"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "-- Grafana variables:\n-- $abholzyklus\n-- $abholzyklus_day\n-- $simulation\n-- $capacity_pct   (optional; Standard 100)\n-- $dyn_max_till_empty  -- z.B. 90 oder 100 (Pflicht für dynamische Abholung)\n\nWITH cfg AS (\n  SELECT\n    CASE lower(NULLIF('$abholzyklus',''))\n      WHEN 'täglich'     THEN 1\n      WHEN 'wöchentlich' THEN 7\n      WHEN '10-tägig'    THEN 10\n      WHEN '14-tägig'    THEN 14\n      WHEN '30-tägig'    THEN 30\n      ELSE NULL\n    END::int AS abholzyklus,\n    CASE lower(NULLIF('$pickup_day',''))\n      WHEN 'montag'     THEN 1\n      WHEN 'dienstag'   THEN 2\n      WHEN 'mittwoch'   THEN 3\n      WHEN 'donnerstag' THEN 4\n      WHEN 'freitag'    THEN 5\n      WHEN 'samstag'    THEN 6\n      WHEN 'sonntag'    THEN 7\n      ELSE NULL\n    END AS abholzyklus_tag,\n    COALESCE(NULLIF('$capacity_pct','')::numeric, 100)       AS capacity_pct,\n    NULLIF('$dyn_max_till_empty','')::numeric                AS dyn_max_till_empty\n),\n\nsim AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    (ts AT TIME ZONE 'Europe/Berlin')::date AS day,\n    new_fill_in,\n    MIN((ts AT TIME ZONE 'Europe/Berlin')::date) OVER (PARTITION BY sensor_id, simulation_number) AS start_date\n  FROM sensor_daily_delta\n  WHERE simulation = TRUE\n    AND simulation_number = $simulation\n    AND (ts AT TIME ZONE 'Europe/Berlin')::date <= CURRENT_DATE\n),\n\njoined AS (\n  SELECT\n    s.*,\n    c.abholzyklus,\n    c.abholzyklus_tag,\n    c.capacity_pct,\n    c.dyn_max_till_empty,\n    ((s.day - s.start_date))::int AS days_since_start,\n    (((EXTRACT(dow FROM s.day)::int + 6) % 7) + 1) AS dow_user  -- 1=Mon .. 7=Sun\n  FROM sim s\n  CROSS JOIN cfg c\n),\n\n-- (dein vorhandener \"fixer\" Fahrplan bleibt erhalten)\nfirst_emptied AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    MIN(days_since_start) FILTER (WHERE dow_user = abholzyklus_tag) AS first_emptied\n  FROM joined\n  GROUP BY sensor_id, simulation_number\n),\n\nmarked AS (\n  SELECT\n    j.*,\n    fe.first_emptied,\n    CASE\n      WHEN fe.first_emptied IS NOT NULL\n       AND j.days_since_start = fe.first_emptied\n      THEN 1\n      WHEN fe.first_emptied IS NOT NULL\n       AND j.abholzyklus IS NOT NULL\n       AND j.abholzyklus > 0\n       AND j.days_since_start >= fe.first_emptied\n       AND ((j.days_since_start - fe.first_emptied) % j.abholzyklus) = 0\n      THEN 1\n      ELSE 0\n    END AS pickup_flag\n  FROM joined j\n  LEFT JOIN first_emptied fe USING (sensor_id, simulation_number)\n  ORDER BY j.sensor_id, j.simulation_number, j.day\n),\n\ngrp_calc AS (\n  SELECT\n    *,\n    SUM(pickup_flag) OVER (PARTITION BY sensor_id, simulation_number ORDER BY day) AS grp\n  FROM marked\n),\n\ngrp_and_cum AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    day,\n    new_fill_in,\n    pickup_flag,                -- fixer Fahrplan\n    grp,                        -- fixer Fahrplan\n    days_since_start,\n    first_emptied,\n    abholzyklus,\n    abholzyklus_tag,\n    capacity_pct,\n    SUM(new_fill_in) OVER (\n      PARTITION BY sensor_id, simulation_number, grp\n      ORDER BY day\n    ) AS cum_fill_since_last_pickup\n  FROM grp_calc\n),\n\n/* ---------- AB HIER: Dynamische Abholung nach Füllstand ---------- */\n\noverall_cum AS (\n  -- Laufende Gesamtsumme (unabhängig vom fixen grp)\n  SELECT\n    j.sensor_id,\n    j.simulation_number,\n    j.day,\n    j.new_fill_in,\n    j.capacity_pct,\n    j.dyn_max_till_empty,\n    SUM(j.new_fill_in) OVER (\n      PARTITION BY j.sensor_id, j.simulation_number\n      ORDER BY j.day\n      ROWS UNBOUNDED PRECEDING\n    ) AS cum_total\n  FROM joined j\n),\n\ndyn_logic AS (\n  SELECT\n    o.*,\n    -- Sicherheit: dyn_max > 0\n    CASE WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0\n         THEN NULL\n         ELSE FLOOR(o.cum_total / o.dyn_max_till_empty)\n    END AS dyn_grp_index,  -- steigt um 1 bei jeder Abholung\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0 THEN 0\n      ELSE\n        CASE\n          WHEN FLOOR(o.cum_total / o.dyn_max_till_empty)\n               >\n               FLOOR(\n                 COALESCE(\n                   LAG(o.cum_total) OVER (PARTITION BY o.sensor_id, o.simulation_number ORDER BY o.day),\n                   0\n                 ) / o.dyn_max_till_empty\n               )\n          THEN 1 ELSE 0\n        END\n    END AS pickup_flag_dyn,\n    CASE\n      WHEN o.dyn_max_till_empty IS NULL OR o.dyn_max_till_empty <= 0 THEN NULL\n      ELSE o.cum_total - (FLOOR(o.cum_total / o.dyn_max_till_empty) * o.dyn_max_till_empty)\n    END AS cum_fill_since_last_dyn\n  FROM overall_cum o\n),\n\ndyn_overflow AS (\n  -- Overflow relativ zur dynamischen Füllstandsbilanz (optional)\n  SELECT\n    d.*,\n    CASE\n      WHEN d.cum_fill_since_last_dyn IS NOT NULL AND d.capacity_pct IS NOT NULL\n           AND d.cum_fill_since_last_dyn > d.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_day_flag_dyn,\n    CASE\n      WHEN d.cum_fill_since_last_dyn IS NOT NULL AND d.capacity_pct IS NOT NULL\n           AND d.cum_fill_since_last_dyn > d.capacity_pct\n           AND COALESCE(\n                 LAG(d.cum_fill_since_last_dyn) OVER (\n                   PARTITION BY d.sensor_id, d.simulation_number, d.dyn_grp_index\n                   ORDER BY d.day\n                 ), 0\n               ) <= d.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_event_flag_dyn\n  FROM dyn_logic d\n),\n\ndyn_summary AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    SUM(pickup_flag_dyn)        AS empties_dyn,\n    MAX(dyn_grp_index)          AS dyn_cycles_completed, -- ~ entspricht empties_dyn\n    SUM(overflow_event_flag_dyn) AS overflow_events_dyn,\n    SUM(overflow_day_flag_dyn)   AS overflow_days_dyn\n  FROM dyn_overflow\n  GROUP BY sensor_id, simulation_number\n)\n\n-- === Ausgabe für Grafen (dynamischer Verlauf) ===\nSELECT\n  d.sensor_id,\n  d.day,\n  d.cum_fill_since_last_dyn,     -- Liniendiagramm (Unit: %)\n  --d.pickup_flag_dyn,             -- 1 am Abholtag (als Marker/Impulse)\n  --d.dyn_grp_index,               -- Zyklusnummer (zur Kontrolle/Filter)\n  d.capacity_pct                 -- Referenzlinie im Graf\nFROM dyn_overflow d\nWHERE sensor_id = '$sensor_ids'\nORDER BY d.sensor_id, d.day;\n\n/* --- Optional: kompakte Zählwerte je Sensor --- \nSELECT * FROM dyn_summary ORDER BY sensor_id;\n*/\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Dynamisch Müllaufkommen ",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 58
+      },
+      "id": 10,
+      "panels": [],
+      "title": "Statische Entsorgung",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "cf0g6y32klfy8f"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "light-purple",
+            "mode": "fixed"
+          },
+          "decimals": 2,
+          "fieldMinMax": false,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          },
+          "unit": "currencyEUR"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_for_empting"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Kosten für Entleerungsfahrten"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_for_volume"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Volumenbasierte Kosten"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Gesamtkosten"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "semi-dark-purple",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 0,
+        "y": 59
+      },
+      "id": 22,
+      "maxPerRow": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cf0g6y32klfy8f"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "hide": false,
+          "rawQuery": true,
+          "rawSql": "-- Grafana variables:\n-- $abholzyklus    (z.B. 'täglich','wöchentlich','10-tägig','14-tägig','30-tägig' oder '')\n-- $abholzyklus_day (z.B. 'Mittwoch')\n-- $simulation     (z.B. 1)\nWITH cfg AS (\n  SELECT\n    CASE\n      lower(NULLIF('$abholzyklus', ''))\n      WHEN 'täglich' THEN 1\n      WHEN 'wöchentlich' THEN 7\n      WHEN '10-tägig' THEN 10\n      WHEN '14-tägig' THEN 14\n      WHEN '30-tägig' THEN 30\n      ELSE NULL\n    END :: int AS abholzyklus,\n    CASE\n      lower(NULLIF('$pickup_day', ''))\n      WHEN 'montag' THEN 1\n      WHEN 'dienstag' THEN 2\n      WHEN 'mittwoch' THEN 3\n      WHEN 'donnerstag' THEN 4\n      WHEN 'freitag' THEN 5\n      WHEN 'samstag' THEN 6\n      WHEN 'sonntag' THEN 7\n      ELSE NULL\n    END AS abholzyklus_tag\n),\n\nsim AS (\n  -- Datumsebene aus sensor_daily_delta\n  SELECT\n    sensor_id,\n    simulation_number,\n    (ts AT TIME ZONE 'Europe/Berlin') :: date AS day,\n    new_fill_in,\n    MIN((ts AT TIME ZONE 'Europe/Berlin') :: date) OVER (PARTITION BY sensor_id, simulation_number) AS start_date\n  FROM\n    sensor_daily_delta\n  WHERE\n    simulation = TRUE\n    AND simulation_number = $simulation\n    AND (ts AT TIME ZONE 'Europe/Berlin') :: date <= CURRENT_DATE -- AND sensor_id = 'Simu001'   -- optional: zum Testen aktivieren\n),\n\njoined AS (\n  -- cfg per CROSS JOIN in jede Zeile ziehen und Hilfsspalten berechnen\n  SELECT\n    s.*,\n    c.abholzyklus,\n    c.abholzyklus_tag,\n    ((s.day - s.start_date)) :: int AS days_since_start,\n    -- dow_user: 1=Mon .. 7=Sun\n    (\n      (\n        (\n          EXTRACT(\n            dow\n            FROM\n              s.day\n          ) :: int + 6\n        ) % 7\n      ) + 1\n    ) AS dow_user\n  FROM\n    sim s\n    CROSS JOIN cfg c\n),\n-- erstes days_since_start finden, an dem der gewählte Wochentag auftritt\nfirst_emptied AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    MIN(days_since_start) FILTER (\n      WHERE\n        dow_user = abholzyklus_tag\n    ) AS first_emptied\n  FROM\n    joined\n  GROUP BY\n    sensor_id,\n    simulation_number\n),\n\n-- pickup-Logik: erstes Mal = days_since_start == first_emptied,\n-- danach: (days_since_start - first_emptied) % abholzyklus = 0 (wenn abholzyklus gesetzt)\nmarked AS (\n  SELECT\n    j.*,\n    fe.first_emptied,\n    CASE\n      WHEN fe.first_emptied IS NOT NULL\n      AND j.days_since_start = fe.first_emptied THEN 1\n      WHEN fe.first_emptied IS NOT NULL\n      AND j.abholzyklus IS NOT NULL\n      AND j.abholzyklus > 0\n      AND j.days_since_start >= fe.first_emptied\n      AND (\n        (j.days_since_start - fe.first_emptied) % j.abholzyklus\n      ) = 0 THEN 1\n      ELSE 0\n    END AS pickup_flag\n  FROM\n    joined j\n    LEFT JOIN first_emptied fe USING (sensor_id, simulation_number)\n  ORDER BY\n    j.sensor_id,\n    j.simulation_number,\n    j.day\n),\n\ngrp_calc AS (\n  SELECT\n    *,\n    SUM(pickup_flag) OVER (\n      PARTITION BY sensor_id,\n      simulation_number\n      ORDER BY\n        day\n    ) AS grp\n  FROM\n    marked\n),\n\ngrp_and_cum AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    day,\n    new_fill_in,\n    pickup_flag,\n    grp,\n    days_since_start,\n    first_emptied,\n    abholzyklus,\n    abholzyklus_tag,\n    SUM(new_fill_in) OVER (\n      PARTITION BY sensor_id,\n      simulation_number,\n      grp\n      ORDER BY\n        day\n    ) AS cum_fill_since_last_pickup\n  FROM\n    grp_calc\n), \n\nsumup AS (\n  SELECT\n    sensor_id,\n    SUM(cum_fill_since_last_pickup) FILTER (\n      WHERE\n        ((days_since_start - first_emptied) % abholzyklus) = abholzyklus -1\n    ) OVER (PARTITION BY sensor_id, simulation_number) AS total_emptied_volumen_per_sensor,\n    COUNT(*) FILTER (\n      WHERE\n        pickup_flag = 1\n    ) OVER (PARTITION BY sensor_id, simulation_number) AS number_of_emptied_per_sensor,\n    SUM(new_fill_in) OVER (PARTITION BY sensor_id, simulation_number) AS sum_total_volumen_per_sensor\n  FROM\n    grp_and_cum\n)\nSELECT\n  sensor_id,\n  number_of_emptied_per_sensor * $cost_per_empty AS cost_for_empting,\n  total_emptied_volumen_per_sensor * $cost_per_volume AS cost_for_volume\nFROM\n  sumup\nWHERE sensor_id = '$sensor_ids'",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Statisch: Kosten",
+      "transformations": [
+        {
+          "id": "calculateField",
+          "options": {
+            "alias": "cost",
+            "binary": {
+              "left": {
+                "matcher": {
+                  "id": "byName",
+                  "options": "cost_for_empting"
+                }
+              },
+              "right": {
+                "matcher": {
+                  "id": "byName",
+                  "options": "cost_for_volume"
+                }
+              }
+            },
+            "mode": "binary",
+            "reduce": {
+              "reducer": "sum"
+            }
+          }
+        }
+      ],
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "cf0g6y32klfy8f"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "light-purple",
+            "mode": "fixed"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "over_flow_kosten"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyEUR"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "anzahl_Überschreitungen"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Anzahl der Überschreitungen"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "anzahl_der_überschrittenen_tage"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Anzahl der überschrittenen Tage"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "over_flow_kosten"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Kosten durch Überfüllung"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "semi-dark-purple",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 59
+      },
+      "id": 24,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cf0g6y32klfy8f"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "-- Grafana variables:\n-- $abholzyklus    (z.B. 'täglich','wöchentlich','10-tägig','14-tägig','30-tägig' oder '')\n-- $abholzyklus_day (z.B. 'Mittwoch')\n-- $simulation     (z.B. 1)\n-- $capacity_pct   (optional; Standard 100)\n\nWITH cfg AS (\n  SELECT\n    CASE lower(NULLIF('$abholzyklus',''))\n      WHEN 'täglich'     THEN 1\n      WHEN 'wöchentlich' THEN 7\n      WHEN '10-tägig'    THEN 10\n      WHEN '14-tägig'    THEN 14\n      WHEN '30-tägig'    THEN 30\n      ELSE NULL\n    END::int AS abholzyklus,\n    CASE lower(NULLIF('$pickup_day',''))\n      WHEN 'montag'     THEN 1\n      WHEN 'dienstag'   THEN 2\n      WHEN 'mittwoch'   THEN 3\n      WHEN 'donnerstag' THEN 4\n      WHEN 'freitag'    THEN 5\n      WHEN 'samstag'    THEN 6\n      WHEN 'sonntag'    THEN 7\n      ELSE NULL\n    END AS abholzyklus_tag,\n    COALESCE(NULLIF('$capacity_pct','')::int, 100) AS capacity_pct\n),\n\nsim AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    (ts AT TIME ZONE 'Europe/Berlin')::date AS day,\n    new_fill_in,\n    MIN((ts AT TIME ZONE 'Europe/Berlin')::date) OVER (PARTITION BY sensor_id, simulation_number) AS start_date\n  FROM sensor_daily_delta\n  WHERE simulation = TRUE\n    AND simulation_number = $simulation\n    AND (ts AT TIME ZONE 'Europe/Berlin')::date <= CURRENT_DATE\n),\n\njoined AS (\n  SELECT\n    s.*,\n    c.abholzyklus,\n    c.abholzyklus_tag,\n    c.capacity_pct,\n    ((s.day - s.start_date))::int AS days_since_start,\n    (((EXTRACT(dow FROM s.day)::int + 6) % 7) + 1) AS dow_user  -- 1=Mon .. 7=Sun\n  FROM sim s\n  CROSS JOIN cfg c\n),\n\nfirst_emptied AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    MIN(days_since_start) FILTER (WHERE dow_user = abholzyklus_tag) AS first_emptied\n  FROM joined\n  GROUP BY sensor_id, simulation_number\n),\n\nmarked AS (\n  SELECT\n    j.*,\n    fe.first_emptied,\n    CASE\n      WHEN fe.first_emptied IS NOT NULL\n       AND j.days_since_start = fe.first_emptied\n      THEN 1\n      WHEN fe.first_emptied IS NOT NULL\n       AND j.abholzyklus IS NOT NULL\n       AND j.abholzyklus > 0\n       AND j.days_since_start >= fe.first_emptied\n       AND ((j.days_since_start - fe.first_emptied) % j.abholzyklus) = 0\n      THEN 1\n      ELSE 0\n    END AS pickup_flag\n  FROM joined j\n  LEFT JOIN first_emptied fe USING (sensor_id, simulation_number)\n  ORDER BY j.sensor_id, j.simulation_number, j.day\n),\n\ngrp_calc AS (\n  SELECT\n    *,\n    SUM(pickup_flag) OVER (PARTITION BY sensor_id, simulation_number ORDER BY day) AS grp\n  FROM marked\n),\n\ngrp_and_cum AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    day,\n    new_fill_in,\n    pickup_flag,\n    grp,\n    days_since_start,\n    first_emptied,\n    abholzyklus,\n    abholzyklus_tag,\n    capacity_pct,\n    SUM(new_fill_in) OVER (PARTITION BY sensor_id, simulation_number, grp ORDER BY day) AS cum_fill_since_last_pickup\n  FROM grp_calc\n),\n\n-- Overflow-Flags: (a) jeder Tag > Kapazität, (b) erste Überschreitung pro grp (= Overflow-Event)\noverflow_marked AS (\n  SELECT\n    g.*,\n    CASE WHEN g.cum_fill_since_last_pickup > g.capacity_pct THEN 1 ELSE 0 END AS overflow_day_flag,\n    CASE\n      WHEN g.cum_fill_since_last_pickup > g.capacity_pct\n       AND COALESCE(\n             LAG(g.cum_fill_since_last_pickup) OVER (\n               PARTITION BY g.sensor_id, g.simulation_number, g.grp\n               ORDER BY g.day\n             ), 0\n           ) <= g.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_event_flag\n  FROM grp_and_cum g\n),\n\n-- Zählung pro Sensor/Simulation\noverflow_sum AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    SUM(overflow_event_flag) AS overflow_events,  -- \"wie oft es passiert\"\n    SUM(overflow_day_flag)  AS overflow_days     -- optional: Anzahl Tage im Overflow\n  FROM overflow_marked\n  GROUP BY sensor_id, simulation_number\n)\n\n-- Verlauf (wie bisher, nur mit Overflow-Infos)\nSELECT\n  m.sensor_id,\n  m.overflow_events AS Anzahl_Überschreitungen,\n  m.overflow_days AS Anzahl_der_überschrittenen_Tage,\n  m.overflow_days * $overflow_cost AS Over_Flow_Kosten\nFROM overflow_sum m\nWHERE sensor_id = '$sensor_ids'\nORDER BY m.sensor_id\n\n\n-- Für eine kompakte Zählung je Sensor/Simulation (optional extra ausführen):\n-- SELECT * FROM overflow_sum ORDER BY sensor_id;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Statische Entsorgung - Überfüllung",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "cf0g6y32klfy8f"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "total_emptied_volumen_per_sensor"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Entsorgter Abfall"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "number_of_emptied_per_sensor"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Anzahl der Entsorgungen"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sum_total_emptied_volumen_per_sensor"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Gesamtmenge angefallener Abfall"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 24,
+        "x": 0,
+        "y": 63
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cf0g6y32klfy8f"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "-- Grafana variables:\n-- $abholzyklus    (z.B. 'täglich','wöchentlich','10-tägig','14-tägig','30-tägig' oder '')\n-- $abholzyklus_day (z.B. 'Mittwoch')\n-- $simulation     (z.B. 1)\n\nWITH cfg AS (\n  SELECT\n    CASE lower(NULLIF('$abholzyklus',''))\n      WHEN 'täglich'     THEN 1\n      WHEN 'wöchentlich' THEN 7\n      WHEN '10-tägig'    THEN 10\n      WHEN '14-tägig'    THEN 14\n      WHEN '30-tägig'    THEN 30\n      ELSE NULL\n    END::int AS abholzyklus,\n    CASE lower(NULLIF('$pickup_day',''))\n      WHEN 'montag'    THEN 1\n      WHEN 'dienstag'  THEN 2\n      WHEN 'mittwoch'  THEN 3\n      WHEN 'donnerstag' THEN 4\n      WHEN 'freitag'   THEN 5\n      WHEN 'samstag'   THEN 6\n      WHEN 'sonntag'   THEN 7\n      ELSE NULL\n    END AS abholzyklus_tag\n),\n\nsim AS (\n  -- Datumsebene aus sensor_daily_delta\n  SELECT\n    sensor_id,\n    simulation_number,\n    (ts AT TIME ZONE 'Europe/Berlin')::date AS day,\n    new_fill_in,\n    MIN((ts AT TIME ZONE 'Europe/Berlin')::date) OVER (PARTITION BY sensor_id, simulation_number) AS start_date\n  FROM sensor_daily_delta\n  WHERE simulation = TRUE\n    AND simulation_number = $simulation\n    AND (ts AT TIME ZONE 'Europe/Berlin')::date <= CURRENT_DATE\n    -- AND sensor_id = 'Simu001'   -- optional: zum Testen aktivieren\n),\n\njoined AS (\n  -- cfg per CROSS JOIN in jede Zeile ziehen und Hilfsspalten berechnen\n  SELECT\n    s.*,\n    c.abholzyklus,\n    c.abholzyklus_tag,\n    ((s.day - s.start_date))::int AS days_since_start,\n    -- dow_user: 1=Mon .. 7=Sun\n    (((EXTRACT(dow FROM s.day)::int + 6) % 7) + 1) AS dow_user\n  FROM sim s\n  CROSS JOIN cfg c\n),\n\n-- erstes days_since_start finden, an dem der gewählte Wochentag auftritt\nfirst_emptied AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    MIN(days_since_start) FILTER (WHERE dow_user = abholzyklus_tag) AS first_emptied\n  FROM joined\n  GROUP BY sensor_id, simulation_number\n),\n\n-- pickup-Logik: erstes Mal = days_since_start == first_emptied,\n-- danach: (days_since_start - first_emptied) % abholzyklus = 0 (wenn abholzyklus gesetzt)\nmarked AS (\n  SELECT\n    j.*,\n    fe.first_emptied,\n    CASE\n      WHEN fe.first_emptied IS NOT NULL\n       AND j.days_since_start = fe.first_emptied\n      THEN 1\n\n      WHEN fe.first_emptied IS NOT NULL\n       AND j.abholzyklus IS NOT NULL\n       AND j.abholzyklus > 0\n       AND j.days_since_start >= fe.first_emptied\n       AND ((j.days_since_start - fe.first_emptied) % j.abholzyklus) = 0\n      THEN 1\n\n      ELSE 0\n    END AS pickup_flag\n  FROM joined j\n  LEFT JOIN first_emptied fe USING (sensor_id, simulation_number)\n  ORDER BY j.sensor_id, j.simulation_number, j.day\n),\n\ngrp_calc AS (\n  SELECT\n    *,\n    SUM(pickup_flag) OVER (PARTITION BY sensor_id, simulation_number ORDER BY day) AS grp\n  FROM marked\n),\n\ngrp_and_cum AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    day,\n    new_fill_in,\n    pickup_flag,\n    grp,\n    days_since_start,\n    first_emptied,\n    abholzyklus,\n    abholzyklus_tag,\n    SUM(new_fill_in) OVER (PARTITION BY sensor_id, simulation_number, grp ORDER BY day) AS cum_fill_since_last_pickup\n  FROM grp_calc\n)\n\nSELECT\n  sensor_id,\n  COUNT(*) FILTER (WHERE pickup_flag = 1) OVER (PARTITION BY sensor_id, simulation_number) AS number_of_emptied_per_sensor,\n  SUM(cum_fill_since_last_pickup) FILTER (WHERE ((days_since_start - first_emptied) % abholzyklus) = abholzyklus-1) OVER (PARTITION BY sensor_id, simulation_number) AS total_emptied_volumen_per_sensor,\n  SUM(new_fill_in) OVER (PARTITION BY sensor_id, simulation_number) AS sum_total_emptied_volumen_per_sensor\nFROM grp_and_cum\nORDER BY sensor_id, day;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Statisch: Volumen und Abholungen",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "cf0g6y32klfy8f"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "capacity_pct"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Variables Limit"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cum_fill_since_last_pickup"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Aktueller Füllstand"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "new_fill_in"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Neuer Inhalt des Tages"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 66
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cf0g6y32klfy8f"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "-- Grafana variables:\n-- $abholzyklus    (z.B. 'täglich','wöchentlich','10-tägig','14-tägig','30-tägig' oder '')\n-- $abholzyklus_day (z.B. 'Mittwoch')\n-- $simulation     (z.B. 1)\n-- $capacity_pct   (optional; Standard 100)\n\nWITH cfg AS (\n  SELECT\n    CASE lower(NULLIF('$abholzyklus',''))\n      WHEN 'täglich'     THEN 1\n      WHEN 'wöchentlich' THEN 7\n      WHEN '10-tägig'    THEN 10\n      WHEN '14-tägig'    THEN 14\n      WHEN '30-tägig'    THEN 30\n      ELSE NULL\n    END::int AS abholzyklus,\n    CASE lower(NULLIF('$pickup_day',''))\n      WHEN 'montag'     THEN 1\n      WHEN 'dienstag'   THEN 2\n      WHEN 'mittwoch'   THEN 3\n      WHEN 'donnerstag' THEN 4\n      WHEN 'freitag'    THEN 5\n      WHEN 'samstag'    THEN 6\n      WHEN 'sonntag'    THEN 7\n      ELSE NULL\n    END AS abholzyklus_tag,\n    COALESCE(NULLIF('$capacity_pct','')::int, 100) AS capacity_pct\n),\n\nsim AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    (ts AT TIME ZONE 'Europe/Berlin')::date AS day,\n    new_fill_in,\n    MIN((ts AT TIME ZONE 'Europe/Berlin')::date) OVER (PARTITION BY sensor_id, simulation_number) AS start_date\n  FROM sensor_daily_delta\n  WHERE simulation = TRUE\n    AND simulation_number = $simulation\n    AND (ts AT TIME ZONE 'Europe/Berlin')::date <= CURRENT_DATE\n),\n\njoined AS (\n  SELECT\n    s.*,\n    c.abholzyklus,\n    c.abholzyklus_tag,\n    c.capacity_pct,\n    ((s.day - s.start_date))::int AS days_since_start,\n    (((EXTRACT(dow FROM s.day)::int + 6) % 7) + 1) AS dow_user  -- 1=Mon .. 7=Sun\n  FROM sim s\n  CROSS JOIN cfg c\n),\n\nfirst_emptied AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    MIN(days_since_start) FILTER (WHERE dow_user = abholzyklus_tag) AS first_emptied\n  FROM joined\n  GROUP BY sensor_id, simulation_number\n),\n\nmarked AS (\n  SELECT\n    j.*,\n    fe.first_emptied,\n    CASE\n      WHEN fe.first_emptied IS NOT NULL\n       AND j.days_since_start = fe.first_emptied\n      THEN 1\n      WHEN fe.first_emptied IS NOT NULL\n       AND j.abholzyklus IS NOT NULL\n       AND j.abholzyklus > 0\n       AND j.days_since_start >= fe.first_emptied\n       AND ((j.days_since_start - fe.first_emptied) % j.abholzyklus) = 0\n      THEN 1\n      ELSE 0\n    END AS pickup_flag\n  FROM joined j\n  LEFT JOIN first_emptied fe USING (sensor_id, simulation_number)\n  ORDER BY j.sensor_id, j.simulation_number, j.day\n),\n\ngrp_calc AS (\n  SELECT\n    *,\n    SUM(pickup_flag) OVER (PARTITION BY sensor_id, simulation_number ORDER BY day) AS grp\n  FROM marked\n),\n\ngrp_and_cum AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    day,\n    new_fill_in,\n    pickup_flag,\n    grp,\n    days_since_start,\n    first_emptied,\n    abholzyklus,\n    abholzyklus_tag,\n    capacity_pct,\n    SUM(new_fill_in) OVER (PARTITION BY sensor_id, simulation_number, grp ORDER BY day) AS cum_fill_since_last_pickup\n  FROM grp_calc\n),\n\n-- Overflow-Flags: (a) jeder Tag > Kapazität, (b) erste Überschreitung pro grp (= Overflow-Event)\noverflow_marked AS (\n  SELECT\n    g.*,\n    CASE WHEN g.cum_fill_since_last_pickup > g.capacity_pct THEN 1 ELSE 0 END AS overflow_day_flag,\n    CASE\n      WHEN g.cum_fill_since_last_pickup > g.capacity_pct\n       AND COALESCE(\n             LAG(g.cum_fill_since_last_pickup) OVER (\n               PARTITION BY g.sensor_id, g.simulation_number, g.grp\n               ORDER BY g.day\n             ), 0\n           ) <= g.capacity_pct\n      THEN 1 ELSE 0\n    END AS overflow_event_flag\n  FROM grp_and_cum g\n),\n\n-- Zählung pro Sensor/Simulation\noverflow_sum AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    SUM(overflow_event_flag) AS overflow_events,  -- \"wie oft es passiert\"\n    SUM(overflow_day_flag)  AS overflow_days     -- optional: Anzahl Tage im Overflow\n  FROM overflow_marked\n  GROUP BY sensor_id, simulation_number\n)\n\n-- Verlauf (wie bisher, nur mit Overflow-Infos)\nSELECT\n  m.sensor_id,\n  m.day,\n  m.new_fill_in,\n  m.cum_fill_since_last_pickup,\n  m.capacity_pct\n  --m.overflow_day_flag,\n  --m.overflow_event_flag\nFROM overflow_marked m\nORDER BY m.sensor_id, m.day\nLIMIT 200;\n\n-- Für eine kompakte Zählung je Sensor/Simulation (optional extra ausführen):\n-- SELECT * FROM overflow_sum ORDER BY sensor_id;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Statische Entsorgung - Überfüllung",
+      "type": "timeseries"
+    }
+  ],
+  "preload": false,
+  "schemaVersion": 41,
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "text": "wöchentlich",
+          "value": "wöchentlich"
+        },
+        "label": "Abholzyklus ",
+        "name": "abholzyklus",
+        "options": [
+          {
+            "selected": false,
+            "text": "täglich",
+            "value": "täglich"
+          },
+          {
+            "selected": true,
+            "text": "wöchentlich",
+            "value": "wöchentlich"
+          },
+          {
+            "selected": false,
+            "text": "10-tägig",
+            "value": "10-tägig"
+          },
+          {
+            "selected": false,
+            "text": "14-tägig",
+            "value": "14-tägig"
+          },
+          {
+            "selected": false,
+            "text": "30-tägig",
+            "value": "30-tägig"
+          }
+        ],
+        "query": "täglich, wöchentlich, 10-tägig, 14-tägig, 30-tägig",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "text": "Freitag",
+          "value": "Freitag"
+        },
+        "label": "Abholtag",
+        "name": "pickup_day",
+        "options": [
+          {
+            "selected": false,
+            "text": "Montag",
+            "value": "Montag"
+          },
+          {
+            "selected": false,
+            "text": "Dienstag",
+            "value": "Dienstag"
+          },
+          {
+            "selected": false,
+            "text": "Mittwoch",
+            "value": "Mittwoch"
+          },
+          {
+            "selected": false,
+            "text": "Donnerstag",
+            "value": "Donnerstag"
+          },
+          {
+            "selected": true,
+            "text": "Freitag",
+            "value": "Freitag"
+          },
+          {
+            "selected": false,
+            "text": "Samstag",
+            "value": "Samstag"
+          },
+          {
+            "selected": false,
+            "text": "Sonntag",
+            "value": "Sonntag"
+          }
+        ],
+        "query": "Montag, Dienstag, Mittwoch, Donnerstag, Freitag, Samstag, Sonntag",
+        "type": "custom"
+      },
+      {
+        "allowCustomValue": false,
+        "current": {
+          "text": "3",
+          "value": "3"
+        },
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "cf0g6y32klfy8f"
+        },
+        "definition": "SELECT DISTINCT simulation_number FROM sensor_daily_delta ORDER BY simulation_number;",
+        "description": "",
+        "label": "Simulation",
+        "name": "simulation",
+        "options": [],
+        "query": "SELECT DISTINCT simulation_number FROM sensor_daily_delta ORDER BY simulation_number;",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "5.99",
+          "value": "5.99"
+        },
+        "name": "cost_per_empty",
+        "options": [
+          {
+            "selected": false,
+            "text": "1",
+            "value": "1"
+          },
+          {
+            "selected": true,
+            "text": "5.99",
+            "value": "5.99"
+          },
+          {
+            "selected": false,
+            "text": "10.54",
+            "value": "10.54"
+          }
+        ],
+        "query": "1,5.99,10.54",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "text": "0.14",
+          "value": "0.14"
+        },
+        "label": "Kosten pro Volumen",
+        "name": "cost_per_volume",
+        "options": [
+          {
+            "selected": true,
+            "text": "0.14",
+            "value": "0.14"
+          },
+          {
+            "selected": false,
+            "text": "0.99",
+            "value": "0.99"
+          },
+          {
+            "selected": false,
+            "text": "1.43",
+            "value": "1.43"
+          },
+          {
+            "selected": false,
+            "text": "7.10",
+            "value": "7.10"
+          },
+          {
+            "selected": false,
+            "text": "16.43",
+            "value": "16.43"
+          }
+        ],
+        "query": "0.14, 0.99, 1.43, 7.10, 16.43",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "text": "7.43",
+          "value": "7.43"
+        },
+        "label": "Überfüllungskosten",
+        "name": "overflow_cost",
+        "options": [
+          {
+            "selected": false,
+            "text": "0.10",
+            "value": "0.10"
+          },
+          {
+            "selected": false,
+            "text": "1.09",
+            "value": "1.09"
+          },
+          {
+            "selected": true,
+            "text": "7.43",
+            "value": "7.43"
+          }
+        ],
+        "query": "0.10,1.09,7.43",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "text": "95",
+          "value": "95"
+        },
+        "label": "Limit für Überfüllung",
+        "name": "capacity_pct",
+        "options": [
+          {
+            "selected": false,
+            "text": "85",
+            "value": "85"
+          },
+          {
+            "selected": false,
+            "text": "90",
+            "value": "90"
+          },
+          {
+            "selected": true,
+            "text": "95",
+            "value": "95"
+          },
+          {
+            "selected": false,
+            "text": "98",
+            "value": "98"
+          }
+        ],
+        "query": "85, 90, 95, 98",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "text": "95",
+          "value": "95"
+        },
+        "label": "Max. für dynamische Entsorgung",
+        "name": "dyn_max_till_empty",
+        "options": [
+          {
+            "selected": false,
+            "text": "80",
+            "value": "80"
+          },
+          {
+            "selected": false,
+            "text": "90",
+            "value": "90"
+          },
+          {
+            "selected": true,
+            "text": "95",
+            "value": "95"
+          },
+          {
+            "selected": false,
+            "text": "97",
+            "value": "97"
+          }
+        ],
+        "query": "80, 90, 95, 97",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "text": "Simu003",
+          "value": "Simu003"
+        },
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "cf0g6y32klfy8f"
+        },
+        "definition": "SELECT sensor_id FROM sensor_daily_delta\nGROUP BY sensor_id\n",
+        "description": "",
+        "label": "Sensoren",
+        "name": "sensor_ids",
+        "options": [],
+        "query": "SELECT sensor_id FROM sensor_daily_delta\nGROUP BY sensor_id\n",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "2025-05-01T00:00:00.000Z",
+    "to": "2025-11-09T00:00:00.000Z"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Simulation (manuell)",
+  "uid": "c05fb99e-5169-4812-b897-4c74fecc0ec0",
+  "version": 60
+}
