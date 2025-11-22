@@ -1,12 +1,24 @@
 # Smart-Waste: ein generisches Architekturmodell
 
 Abstract:
-
-
-
+<br>
+<br>
+<br>
 Vorschau:
-
+<br>
 *Dashboard zur Simulation*
+<br>
+<img width="1864" height="57" alt="image" src="https://github.com/user-attachments/assets/3fba30b7-a4d9-402b-bba2-95d4305ac98b" />
+Auswahloptionen:<br>
+Abholzyklus: Wie oft wird der Müll bei einer statischen Abholung entsorgt.<br>
+Abholtag: An welchem Tag wird der Müll entsorgt (*1)<br>
+Simulation: Hier besteht die Auswahl zwischen 3 Simulation mit unterschiedlich starken Müllaufkommen<br>
+cost_per_empty: Hier werden die Kosten für die reine Abholung eingetragen (*2)<br>
+Kosten pro Volumen: Hier werden die Kosten pro Volumen (hier pro Prozent eingetragen) (*2)<br>
+Überfüllungskosten: Höhe der Kosten, die pro Tag anfallen, wenn das Behältnis das Limit erreicht<br>
+Limit für die Überfüllung: Ab wann gilt ein Behältnis ab voll <br>
+Max. für dynamische Entsorgung: Ab wie viel % Füllstand soll das Behältnis abgeholt werden<br>
+Sensoren: Für einige Statistiken, wird ein Graph pro Sensor der jeweiligen Simulation angezeigt, dieser kann hier ausgewählt werden<br>
 
 <img width="3406" height="788" alt="Bildschirmfoto 2025-11-22 um 12 51 18" src="https://github.com/user-attachments/assets/7a41543f-1b57-4683-94c0-a162ac0b8ea2" />
 Vergleich der statischen und dynamischen Kosten als Graph
@@ -24,17 +36,20 @@ Vergleich der statischen und dynamischen Kosten
 Überblick statische Entsorgungskosten je ausgewählter Sensor
 
 
-"Architekturmodell"
-Schichten:
-1.sss
-2. sss
-3. ss
-4.ss
+"Architekturmodell"<br>
+Schichten:<br>
+1.sss<br>
+2. sss<br>
+3. ss<br>
+4.ss<br>
 
 
-Prototyp:
-
-*Architektur*
-
-*Komponenten*
-
+Prototyp:<br>
+<br>
+*Architektur*<br>
+<br>
+*Komponenten*<br>
+<br>
+_____________________________<br>
+(*1) Erfolgt die Abholung nicht nach einem Wochenschema, sondern bspw. nach 10 Tagen, handelt es sich hierbei um den Start Tag<br>
+(*2) Wenn sich die Kosten ausschließlich anhand der Abholungsfäufigkeit oder des Volumens berechnen, kann hier einfach 0 eingetragen werden<br>
