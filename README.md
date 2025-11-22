@@ -1,0 +1,2 @@
+# Smart-Waste
+Bachelorarbeit Wirtschaftsinformatik
