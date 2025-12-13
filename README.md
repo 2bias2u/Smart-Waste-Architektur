@@ -36,6 +36,11 @@ Vergleich der statischen und dynamischen Kosten
 Überblick statische Entsorgungskosten je ausgewählter Sensor
 
 
+*Use Case*
+Auswertung der Sensordaten für Umweltberichte
+- Export als Excel / Google Sheets Datei in Cloud Speicher, Versand per Mail
+
+
 "Architekturmodell"<br>
 Schichten:<br>
 1.sss<br>
