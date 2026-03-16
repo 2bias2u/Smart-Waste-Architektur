@@ -98,24 +98,21 @@ Im prototypischen Szenario wird ein Campus mit verschiedenen Gebäuden, Sammelst
 ​- Visualisierung des durchschnittlichen Füllstands vor jeder Entleerung, um Über- bzw. Unterdimensionierung und statische Entleerungszyklen zu bewerten. <br>
 <br>
 *Eingesetzte Software und Zuordnung zu den Schichten*
-| Schicht                        | Aufgabe                            | Beispiel-Software im Prototyp                                                                          |
-| ------------------------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| 1 – Physische Schicht          | Füllstandmessung                   | LoRaWAN-Füllstandsensor, ESP32-Ultraschall.Bachelorarbeit-Tobias-Duba-792835-Smart-Waste-Systeme.pdf​  |
-| 2 – Gateway-Schicht            | Funk → IP-Netz                     | LoRaWAN-Gateway, bestehendes Wi-Fi.Bachelorarbeit-Tobias-Duba-792835-Smart-Waste-Systeme.pdf​          |
-| 3 – Kommunikationsschicht      | Datenübertragung                   | Mosquitto MQTT-Broker, ChirpStack MQTT.Bachelorarbeit-Tobias-Duba-792835-Smart-Waste-Systeme.pdf​      |
-| 4 – Datenverarbeitungsschicht  | Vereinheitlichung, Logik, KPIs     | n8n (No-Code-Workflows).Bachelorarbeit-Tobias-Duba-792835-Smart-Waste-Systeme.pdf​                     |
-| 5 – Datensicherungsschicht     | Zeitreihenspeicherung, SQL-Zugriff | TimescaleDB (PostgreSQL), Adminer.Bachelorarbeit-Tobias-Duba-792835-Smart-Waste-Systeme.pdf​           |
-| 6 – Anwendung & Visualisierung | Dashboards, Filter, Exporte        | Grafana inkl. Plugins, Excel-Export via n8n.Bachelorarbeit-Tobias-Duba-792835-Smart-Waste-Systeme.pdf​ |
+
+## Software pro Schicht
+
+| Schicht                         | Aufgabe                            | Beispiel-Software im Prototyp                        |
+|---------------------------------|------------------------------------|------------------------------------------------------|
+| 1 – Physische Schicht          | Füllstandmessung                   | LoRaWAN-Füllstandsensor, ESP32-Ultraschall.         |
+| 2 – Gateway-Schicht            | Funk → IP-Netz                     | LoRaWAN-Gateway, bestehendes Wi-Fi.                 |
+| 3 – Kommunikationsschicht      | Datenübertragung                   | Mosquitto MQTT-Broker, ChirpStack MQTT.             |
+| 4 – Datenverarbeitungsschicht  | Vereinheitlichung, Logik, KPIs     | n8n (No-Code-Workflows).                            |
+| 5 – Datensicherungsschicht     | Zeitreihenspeicherung, SQL-Zugriff | TimescaleDB (PostgreSQL), Adminer.                  |
+| 6 – Anwendung & Visualisierung | Dashboards, Filter, Exporte        | Grafana inkl. Plugins, Excel-Export via n8n.        |
 
 
 
 
-Prototyp:<br>
-<br>
-*Architektur*<br>
-<br>
-*Komponenten*<br>
-<br>
 _____________________________<br>
 (*1) Erfolgt die Abholung nicht nach einem Wochenschema, sondern bspw. nach 10 Tagen, handelt es sich hierbei um den Start Tag<br>
 (*2) Wenn sich die Kosten ausschließlich anhand der Abholungsfäufigkeit oder des Volumens berechnen, kann hier einfach 0 eingetragen werden<br>
