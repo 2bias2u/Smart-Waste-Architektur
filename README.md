@@ -88,7 +88,7 @@ Vergleich der statischen und dynamischen Kosten
 Überblick statische Entsorgungskosten je ausgewählter Sensor
 
 
-# Anwednungsbeispiel
+# Anwendungsbeispiel
 Im prototypischen Szenario wird ein Campus mit verschiedenen Gebäuden, Sammelstellen und Abfallfraktionen betrachtet
 <br>
 *Zielsetzungen im Szenario* <br>
