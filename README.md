@@ -1,6 +1,7 @@
 # Smart-Waste: ein generisches Architekturmodell
 
-Abstract:
+Smart Waste Architecture – Generic Model & Prototype<br>
+Dieses Repository enthält das generische Architekturmodell für Smart-Waste-Systeme sowie einen prototypischen Implementierungsansatz zur Erfassung, <br>Verarbeitung und Nutzung von Füllstandsdaten aus smarter Müllsensorik.<br>
 <br>
 <br>
 <br>
