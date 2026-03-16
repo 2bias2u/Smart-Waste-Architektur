@@ -3,8 +3,9 @@
 Dieses Repository enthält das generische Architekturmodell für Smart-Waste-Systeme sowie einen prototypischen Implementierungsansatz zur Erfassung, <br>Verarbeitung und Nutzung von Füllstandsdaten aus smarter Müllsensorik.<br>
 <br>
 *Einleitung*
-In vielen institutionellen Kontexten (z.B. Bildungseinrichtungen, Gesundheitseinrichtungen, Wohnquartiere) erfolgt die Abfallentsorgung auf Basis statischer Entleerungszyklen ohne Transparenz über das tatsächliche Müllaufkommen. Das führt zu überfüllten Behältern, unnötigen Leerungen und vermeidbarem Ressourcenverbrauch.
-​Ziel dieses Projekts ist ein generisches, schichtenbasiertes Architekturmodell, das Füllstandsdaten sensorbasiert erfasst, strukturiert verarbeitet und für Monitoring, Auswertungen und Optimierung von Entsorgungsprozessen bereitstellt.
+In vielen institutionellen Kontexten (z.B. Bildungseinrichtungen, Gesundheitseinrichtungen, Wohnquartiere) erfolgt die Abfallentsorgung auf Basis statischer Entleerungszyklen ohne Transparenz über das tatsächliche Müllaufkommen. Das führt zu überfüllten Behältern, unnötigen Leerungen und vermeidbarem Ressourcenverbrauch.<br>
+​Ziel dieses Projekts ist ein generisches, schichtenbasiertes Architekturmodell, das Füllstandsdaten sensorbasiert erfasst, strukturiert verarbeitet und für Monitoring, Auswertungen und Optimierung von Entsorgungsprozessen bereitstellt.<br>
+Das Architekturmodell wurde nach der Design Science Research Methodology (DSRM) nach Peffers et al. iterativ entwickelt und in mehreren Verbesserungszyklen verfeinert.
 ​
 <br>
 <br>
