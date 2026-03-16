@@ -1,0 +1,768 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 13,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "xxx"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "axisSoftMax": 100,
+            "axisSoftMin": 0,
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "dark-red"
+              },
+              {
+                "color": "#EAB839",
+                "value": 60
+              },
+              {
+                "color": "green",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 9,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "xxx"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH sensor_simulation AS (\n  SELECT * FROM (\n    VALUES\n      ('Simu001', 1),\n      ('Simu002', 1),\n      ('Simu003', 1),\n      ('Simu004', 2),\n      ('Simu005', 2),\n      ('Simu006', 2),\n      ('Simu007', 2),\n      ('Simu008', 3),\n      ('Simu009', 3),\n      ('Simu010', 3)\n  ) AS t(sensor_id, simulation_number)\n),\n\nsim AS (\n  SELECT\n    d.sensor_id,\n    d.simulation_number,\n    (d.ts AT TIME ZONE 'Europe/Berlin')::date AS day,\n    d.new_fill_in,\n    MIN((d.ts AT TIME ZONE 'Europe/Berlin')::date)\n      OVER (PARTITION BY d.sensor_id, d.simulation_number) AS start_date\n  FROM sensor_daily_delta d\n  JOIN sensor_simulation ss\n    ON d.sensor_id = ss.sensor_id\n   AND d.simulation_number = ss.simulation_number\n  WHERE d.simulation = TRUE\n    AND $__timeFilter(d.ts)          -- 🔑 Grafana-Zeitraum\n),\n\nbase AS (\n  SELECT\n    *,\n    (day - start_date)::int AS days_since_start,\n    (((EXTRACT(dow FROM day)::int + 6) % 7) + 1) AS dow_user\n  FROM sim\n),\n\n-- erster Montag je Sensor\nfirst_monday AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    MIN(days_since_start) AS first_pickup_day\n  FROM base\n  WHERE dow_user = 1\n  GROUP BY sensor_id, simulation_number\n),\n\n-- Abholtage markieren (Montag, alle 7 Tage)\nmarked AS (\n  SELECT\n    b.*,\n    fm.first_pickup_day,\n    CASE\n      WHEN b.days_since_start > fm.first_pickup_day\n       AND (b.days_since_start - fm.first_pickup_day) % 7 = 0\n      THEN 1\n      ELSE 0\n    END AS pickup_flag\n  FROM base b\n  JOIN first_monday fm\n    ON b.sensor_id = fm.sensor_id\n   AND b.simulation_number = fm.simulation_number\n),\n\n-- Zyklen bilden\ngrp_calc AS (\n  SELECT\n    *,\n    SUM(pickup_flag) OVER (\n      PARTITION BY sensor_id, simulation_number\n      ORDER BY day\n      ROWS UNBOUNDED PRECEDING\n    ) AS grp\n  FROM marked\n),\n\n-- Wochenfüllstand je Zyklus\nweekly_fill AS (\n  SELECT\n    sensor_id,\n    simulation_number,\n    grp,\n    SUM(new_fill_in) AS fill_before_pickup\n  FROM grp_calc\n  GROUP BY sensor_id, simulation_number, grp\n)\n\n-- 🔑 Ergebnis: Ø Füllstand bei Abholung im gewählten Zeitraum\nSELECT\n  sensor_id,\n  --simulation_number,\n  ROUND(AVG(fill_before_pickup), 2) AS avg_fill_at_pickup\n  --COUNT(*)                          AS pickup_count\nFROM weekly_fill\nWHERE grp > 0\nGROUP BY sensor_id, simulation_number\nORDER BY sensor_id;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Statisch: Durchschnittlicher Füllstand bei Entleerung",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "xxx"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "#EAB839",
+                "value": 60
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "fill_level"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Füllstand"
+              },
+              {
+                "id": " t",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": ""
+            },
+            "properties": []
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 15,
+        "w": 9,
+        "x": 0,
+        "y": 8
+      },
+      "id": 2,
+      "options": {
+        "basemap": {
+          "config": {
+            "server": "streets",
+            "showLabels": true,
+            "theme": "auto"
+          },
+          "name": "Layer 0",
+          "type": "default"
+        },
+        "controls": {
+          "mouseWheelZoom": true,
+          "showAttribution": true,
+          "showDebug": false,
+          "showMeasure": true,
+          "showScale": true,
+          "showZoom": true
+        },
+        "layers": [
+          {
+            "config": {
+              "showLegend": true,
+              "style": {
+                "color": {
+                  "field": "fill_level",
+                  "fixed": "dark-green"
+                },
+                "opacity": 0.4,
+                "rotation": {
+                  "fixed": 0,
+                  "max": 360,
+                  "min": -360,
+                  "mode": "mod"
+                },
+                "size": {
+                  "fixed": 10,
+                  "max": 15,
+                  "min": 2
+                },
+                "symbol": {
+                  "fixed": "img/icons/unicons/trash-alt.svg",
+                  "mode": "fixed"
+                },
+                "symbolAlign": {
+                  "horizontal": "center",
+                  "vertical": "center"
+                },
+                "text": {
+                  "fixed": "",
+                  "mode": "field"
+                },
+                "textConfig": {
+                  "fontSize": 12,
+                  "offsetX": 0,
+                  "offsetY": 0,
+                  "textAlign": "center",
+                  "textBaseline": "middle"
+                }
+              }
+            },
+            "filterData": {
+              "id": "byRefId",
+              "options": "A"
+            },
+            "location": {
+              "latitude": "lat",
+              "longitude": "lon",
+              "mode": "auto"
+            },
+            "name": "Müllsensoren",
+            "tooltip": true,
+            "type": "markers"
+          }
+        ],
+        "tooltip": {
+          "mode": "details"
+        },
+        "view": {
+          "allLayers": true,
+          "id": "coords",
+          "lat": 11.1,
+          "lon": 11.1,
+          "shared": true,
+          "zoom": 14.99
+        }
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cf0g6y32klfy8f"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT \n  s.lon, \n  s.lat,\n  d.fill_level,\n  d.created_at,\n  s.sensor_id\nFROM sensor_data_  s \n  JOIN sensor_fill_level d \n  ON s.sensor_id = d.sensor_id\nWHERE s.type IN ($type)\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Karte",
+      "type": "geomap"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "xxx"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 9,
+        "y": 8
+      },
+      "id": 3,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xField": "gebaude",
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "cf0g6y32klfy8f"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT \n  s.sensor_id,\n  gebaude,\n  LEFT(s.standortbeschreibung, 40) AS Standort,\n  SUM(d.new_fill_in) AS summe\nFROM sensor_data s \nJOIN sensor_fill_level d \n  ON s.sensor_id = d.sensor_id\nGROUP BY s.sensor_id, s.standortbeschreibung, gebaude\nORDER BY s.sensor_id;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Gesamtes Abfallaufkommen im Vergleich",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "xxx"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 15,
+        "w": 7,
+        "x": 17,
+        "y": 8
+      },
+      "id": 1,
+      "options": {
+        "color": "blue",
+        "iteration": 7,
+        "labelSize": 14,
+        "monochrome": false,
+        "nodeColor": "grey",
+        "nodePadding": 30,
+        "nodeWidth": 30
+      },
+      "pluginVersion": "1.1.4",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "xxx"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  s.gebaude     AS \"Gebäude\",\n  s.type         AS \"Müllart\",       -- Müllart\n  SUM(f.new_fill_in) AS value     -- Gesamtmenge\nFROM sensor_data s\nJOIN sensor_fill_level f \n  ON s.sensor_id = f.sensor_id\n-- OPTIONAL: Zeitraum begrenzen, z.B. mit created_at\n-- WHERE f.created_at::date BETWEEN '2025-01-01' AND '2025-01-31'\nWHERE $__timeFilter(f.created_at)\nGROUP BY\n  s.gebaude,\n  s.type\nORDER BY\n  s.gebaude,\n  s.type;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Müllflow",
+      "type": "netsage-sankey-panel"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "xxx"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Zeit bis Voll"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 179
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 9,
+        "y": 15
+      },
+      "id": 4,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "xxx"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n    CONCAT(\n        FLOOR(EXTRACT(EPOCH FROM (a.estimated_full_time - NOW())) / 86400), ' Tage, ',\n        FLOOR(MOD(EXTRACT(EPOCH FROM (a.estimated_full_time - NOW())) / 3600, 24)), ' Stunden'\n    ) AS \"Zeit bis Voll\",\n    --s.sensor_id AS \"ID\",\n    (s.gebaude || ' - ' || s.standortbeschreibung) AS \"Standort\"\n    --a.estimated_full_time AS \"Prognose\"\nFROM sensor_data s\nJOIN sensor_avg_fill_rate a ON s.sensor_id = a.sensor_id\nORDER BY \"Zeit bis Voll\"ASC;\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Vorhersage",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "xxx"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "axisSoftMax": 100,
+            "axisSoftMin": 0,
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "dark-red"
+              },
+              {
+                "color": "#EAB839",
+                "value": 60
+              },
+              {
+                "color": "green",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 23
+      },
+      "id": 5,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "pluginVersion": "12.0.1+security-01",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "xxx"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT AVG(fill_before_empty), sensor_id, created_at\nFROM sensor_last_empty \nWHERE sensor_id LIKE 'Simu%' AND $__timeFilter(created_at)   \nGROUP BY sensor_id, created_at",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Dynamisch: Durchschnittlicher Füllstand bei Entleerung",
+      "type": "barchart"
+    }
+  ],
+  "preload": false,
+  "schemaVersion": 41,
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "xxx"
+        },
+        "definition": "SELECT type FROM sensor_data",
+        "description": "",
+        "includeAll": true,
+        "label": "Müllart",
+        "name": "type",
+        "options": [],
+        "query": "SELECT type FROM sensor_data",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now/fy",
+    "to": "now/fy"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Müllstand",
+  "uid": "6a751cf9-4d75-4aee-930f-a6e3f72cfc1a",
+  "version": 22
+}
