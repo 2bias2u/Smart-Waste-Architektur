@@ -9,6 +9,53 @@ Das Architekturmodell wurde nach der Design Science Research Methodology (DSRM) 
 ​
 <br>
 <br>
+<br>
+
+#Architekturmodell (6-Schichten-Modell)
+Das finale Modell besteht aus sechs logisch getrennten Schichten, die Sensorik, Datenverarbeitung und Nutzung klar voneinander trennen.
+​
+*Physische Schicht*
+Inhalt: Füllstandsensoren (z.B. Ultraschall, Gewicht), optional Aktoren.
+<br>​
+Aufgabe: Erfassung des Ist-Zustandes (Füllstand, Ereignisse) im Behälter.
+<br>
+<br>
+*Gateway-Schicht*
+<br>
+Inhalt: LoRaWAN-Gateways, bestehende WLAN-Infrastruktur.
+<br>​
+Aufgabe: Übergang von Funkprotokollen (z.B. LoRaWAN, Wi-Fi) in ein IP-basiertes Netzwerk.
+<br>
+<br>
+*Kommunikationsschicht*
+<br>
+Inhalt: Nachrichtenbroker / Protokolle (z.B. MQTT, HTTP).
+<br>​
+Aufgabe: Transport der aufbereiteten Sensordaten zur Datenverarbeitung, typischerweise in JSON-Strukturen.
+<br>​
+<br>
+*Datenverarbeitungsschicht*
+<br>
+Inhalt: Workflow- / Integrationsplattform (No-Code).​
+<br>
+Aufgaben: Vereinheitlichung unterschiedlicher Sensorformate, Berechnung abgeleiteter Kennzahlen (z.B. Füllraten, prognostizierter Leerungszeitpunkt), Export- und Integrationslogik (z.B. Berichte, Schnittstellen).
+<br>
+<br>​
+*Datensicherungsschicht*
+<br>
+Inhalt: Zeitreihendatenbank auf Basis von PostgreSQL (z.B. TimescaleDB) plus Admin-Tool.
+<br>​
+Aufgabe: Persistente Speicherung der Messwerte und Kennzahlen, effiziente Zeitreihenabfragen und Wartung.
+<br>​
+<br>
+*Anwendungs- & Visualisierungsschicht*
+<br>
+Inhalt: Webbasiertes Dashboard (z.B. Grafana).
+<br>​
+Aufgaben: Visualisierung von Füllständen, Abfallströmen und Kosten, Filter- und Drill-Down-Funktionen, Exporte (z.B. Excel) für Berichtswesen.
+<br>
+<br>
+<br>
 Vorschau:
 <br>
 *Dashboard zur Simulation*
