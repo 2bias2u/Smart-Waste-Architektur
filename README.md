@@ -114,10 +114,10 @@ Im prototypischen Szenario wird ein Campus mit verschiedenen Gebäuden, Sammelst
 Der Prototyp dient als Funktionsnachweis des Architekturmodells und adressiert noch nicht alle Skalierungs- und Betriebsanforderungen. <br>
 <br>​
 *Wesentliche Grenzen sind:* <br>
-- Single-Server-Deployment. Alle Kernkomponenten (MQTT, n8n, Datenbank, Dashboard) laufen auf einem einzelnen Server, was bei starker Skalierung zu einem Single Point of Failure führt. <br>
-​- Datenverarbeitung mit No-Code-Plattform: n8n bietet hohe Flexibilität (schnelle Anpassung, grafische Workflows), kann aber bei vielen parallelen Workflows zum Performance-Engpass werden. Extrem-Szenarien im Smart-City-Maßstab würden eine alternative, skalierbare Verarbeitungsschicht erfordern.<br>
-​- Sensorik & Messmethodik: Nutzung weniger Sensortypen (z.B. nur Ultraschall) kann bei ungünstiger Befüllung zu Messfehlern führen. Kombination von Volumen- und Gewichtssensorik oder zusätzlichen Kontextdaten wird im Prototyp noch nicht umgesetzt. <br>
-​- Begrenzter Feldbetrieb: Prototypische Installation einzelner Behälter, aber noch kein flächendeckender Rollout; dadurch eingeschränkte Erkenntnisse zu Wartung, Robustheit und Betriebskosten. <br>
+Single-Server-Deployment. Alle Kernkomponenten (MQTT, n8n, Datenbank, Dashboard) laufen auf einem einzelnen Server, was bei starker Skalierung zu einem Single Point of Failure führt. <br> <br>
+​Datenverarbeitung mit No-Code-Plattform: n8n bietet hohe Flexibilität (schnelle Anpassung, grafische Workflows), kann aber bei vielen parallelen Workflows zum Performance-Engpass werden. Extrem-Szenarien im Smart-City-Maßstab würden eine alternative, skalierbare Verarbeitungsschicht erfordern.<br> <br>
+​Sensorik & Messmethodik: Nutzung weniger Sensortypen (z.B. nur Ultraschall) kann bei ungünstiger Befüllung zu Messfehlern führen. Kombination von Volumen- und Gewichtssensorik oder zusätzlichen Kontextdaten wird im Prototyp noch nicht umgesetzt. <br> <br>
+​Begrenzter Feldbetrieb: Prototypische Installation einzelner Behälter, aber noch kein flächendeckender Rollout; dadurch eingeschränkte Erkenntnisse zu Wartung, Robustheit und Betriebskosten. <br>
 ​
 
 
