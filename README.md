@@ -56,7 +56,7 @@ Aufgaben: Visualisierung von Füllständen, Abfallströmen und Kosten, Filter- u
 <br>
 <br>
 <br>
-Vorschau:
+# Simulation Vorschau
 <br>
 *Dashboard zur Simulation*
 <br>
@@ -88,17 +88,26 @@ Vergleich der statischen und dynamischen Kosten
 Überblick statische Entsorgungskosten je ausgewählter Sensor
 
 
-*Use Case*
-Auswertung der Sensordaten für Umweltberichte
-- Export als Excel / Google Sheets Datei in Cloud Speicher, Versand per Mail
+# Anwednungsbeispiel
+Im prototypischen Szenario wird ein Campus mit verschiedenen Gebäuden, Sammelstellen und Abfallfraktionen betrachtet
+<br>
+*Zielsetzungen im Szenario* <br>
+- Kontinuierliche Erfassung von Füllständen für ausgewählte Behälter. <br>
+​- Ableitung von Kennzahlen pro Campusbereich und Abfallart (z.B. entsorgte Menge, Auslastung der Behälter). <br>
+​- Bereitstellung eines Exports (z.B. Excel) für Umweltberichte und interne Auswertungen. <br>
+​- Visualisierung des durchschnittlichen Füllstands vor jeder Entleerung, um Über- bzw. Unterdimensionierung und statische Entleerungszyklen zu bewerten. <br>
+<br>
+*Eingesetzte Software und Zuordnung zu den Schichten*
+| Schicht                        | Aufgabe                            | Beispiel-Software im Prototyp                                                                          |
+| ------------------------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 1 – Physische Schicht          | Füllstandmessung                   | LoRaWAN-Füllstandsensor, ESP32-Ultraschall.Bachelorarbeit-Tobias-Duba-792835-Smart-Waste-Systeme.pdf​  |
+| 2 – Gateway-Schicht            | Funk → IP-Netz                     | LoRaWAN-Gateway, bestehendes Wi-Fi.Bachelorarbeit-Tobias-Duba-792835-Smart-Waste-Systeme.pdf​          |
+| 3 – Kommunikationsschicht      | Datenübertragung                   | Mosquitto MQTT-Broker, ChirpStack MQTT.Bachelorarbeit-Tobias-Duba-792835-Smart-Waste-Systeme.pdf​      |
+| 4 – Datenverarbeitungsschicht  | Vereinheitlichung, Logik, KPIs     | n8n (No-Code-Workflows).Bachelorarbeit-Tobias-Duba-792835-Smart-Waste-Systeme.pdf​                     |
+| 5 – Datensicherungsschicht     | Zeitreihenspeicherung, SQL-Zugriff | TimescaleDB (PostgreSQL), Adminer.Bachelorarbeit-Tobias-Duba-792835-Smart-Waste-Systeme.pdf​           |
+| 6 – Anwendung & Visualisierung | Dashboards, Filter, Exporte        | Grafana inkl. Plugins, Excel-Export via n8n.Bachelorarbeit-Tobias-Duba-792835-Smart-Waste-Systeme.pdf​ |
 
 
-"Architekturmodell"<br>
-Schichten:<br>
-1.sss<br>
-2. sss<br>
-3. ss<br>
-4.ss<br>
 
 
 Prototyp:<br>
