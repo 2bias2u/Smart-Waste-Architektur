@@ -11,7 +11,7 @@ Das Architekturmodell wurde nach der Design Science Research Methodology (DSRM) 
 <br>
 <br>
 
-#Architekturmodell (6-Schichten-Modell)
+# Architekturmodell (6-Schichten-Modell)
 Das finale Modell besteht aus sechs logisch getrennten Schichten, die Sensorik, Datenverarbeitung und Nutzung klar voneinander trennen.
 ​
 *Physische Schicht*
