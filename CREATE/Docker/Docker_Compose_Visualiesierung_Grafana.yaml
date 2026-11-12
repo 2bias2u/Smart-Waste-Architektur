@@ -1,0 +1,25 @@
+version: "3.8"
+
+services:
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"          # http://localhost:3000
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin       # Benutzername fürs Login
+      - GF_SECURITY_ADMIN_PASSWORD=YOUR-PASSWORD
+      - GF_SERVER_DOMAIN=localhost
+      - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s:%(http_port)s/
+      # Optional: an Postgres anbinden usw. (z.B. für Dashboards/Config)
+      # - GF_DATABASE_TYPE=postgres
+      # - GF_DATABASE_HOST=postgres:5432
+      # - GF_DATABASE_USER=grafana
+      # - GF_DATABASE_PASSWORD=geheimespasswort
+      # - GF_DATABASE_NAME=grafana
+    volumes:
+      - grafana_data:/var/lib/grafana  # persistente Daten (Dashboards, User, etc.)
+
+volumes:
+  grafana_data:

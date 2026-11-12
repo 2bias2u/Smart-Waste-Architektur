@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  n8n:
+    image: n8nio/n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=YOUR-USER-NAME
+      - N8N_BASIC_AUTH_PASSWORD=YOUR-PASSWORD
+      - N8N_SECURE_COOKIE=false
+      - N8N_HOST=YOUR-EXTERNAL_DOMAIN
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - N8N_ENCRYPTION_KEY=YOUR-ENCRYPTION-KEY   # erzeugen mit: openssl rand -hex 32
+      - WEBHOOK_URL=YOUR_EXTERNAL_DOMAIN
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=db
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=n8n
+      - DB_POSTGRESDB_USER=n8n
+      - DB_POSTGRESDB_PASSWORD=n8n
+      - NODE_FUNCTION_ALLOW_EXTERNAL=axios,qs
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  db:
+    image: postgres:12
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=n8n        # muss zu DB_POSTGRESDB_USER passen
+      - POSTGRES_PASSWORD=n8n    # muss zu DB_POSTGRESDB_PASSWORD passen
+      - POSTGRES_DB=n8n
+    restart: unless-stopped
+
+volumes:
+  db-data:

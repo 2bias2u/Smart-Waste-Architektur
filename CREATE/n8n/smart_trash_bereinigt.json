@@ -1,0 +1,2618 @@
+{
+  "name": "smart trash",
+  "nodes": [
+    {
+      "parameters": {
+        "topics": "trashsensor/salt",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mqttTrigger",
+      "typeVersion": 1,
+      "position": [
+        -592,
+        816
+      ],
+      "id": "7712e96e-c3f0-452d-ba60-dc3a869112f1",
+      "name": "MQTT Trigger - Berlin",
+      "credentials": {
+        "mqtt": {
+          "id": "xKljNcf1Bzwp21RC",
+          "name": "MQTT Broker"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// inputData kommt automatisch aus dem vorherigen Node (z.B. MQTT Trigger)\nreturn items.map(item => {\n    // Die message ist als String im Feld item.json.message\n    let msg = item.json.message;\n\n    // String in gültiges JSON umwandeln\n    // erstens, evtl. fehlende Kommas und unnötige Leerzeichen korrigieren\n    msg = msg.replace(/,\\s*\\n\\s*\"/g, ',\\n\"') // korrigiert evtl. fehlende Kommas\n             .replace(/\\n\\s*}/g, '\\n}');    // korrigiert Zeilenende\n\n    // JSON parsen\n    let parsed;\n    try {\n        parsed = JSON.parse(msg);\n    } catch (e) {\n        // Falls Parsing fehlschlägt\n        parsed = { error: \"Parsing failed\", raw: msg };\n    }\n\n    return {\n        json: {\n            topic: item.json.topic, // original topic behalten\n            ...parsed               // alle Felder aus der Message\n        }\n    };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -384,
+        816
+      ],
+      "id": "e8dfb9e0-bc1b-42fd-82e0-72459b09c0e9",
+      "name": "MQTT message to JSON - Berlin"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "75d4ade1-7c69-4916-9d5a-cf015a2eb0a0",
+              "name": "sensor_id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "261c8d74-287c-4625-9bfb-d9db676ab451",
+              "name": "created_at",
+              "value": "={{ $json.time }}",
+              "type": "string"
+            },
+            {
+              "id": "b6b0d63e-bb5f-4102-a176-9c871ce9f9f6",
+              "name": "fill_level",
+              "value": "={{ $json.percent }}",
+              "type": "number"
+            },
+            {
+              "id": "c815316d-11a0-4e44-8845-17056ba410c8",
+              "name": "distance",
+              "value": "={{ $json.distance }}",
+              "type": "number"
+            },
+            {
+              "id": "ae8d3b04-27ed-41eb-80f9-e1c0f6fd981c",
+              "name": "lon",
+              "value": "={{ $json.lon }}",
+              "type": "number"
+            },
+            {
+              "id": "9e364e50-ecb6-4056-943d-883ce4701b17",
+              "name": "lat",
+              "value": "={{ $json.lat }}",
+              "type": "number"
+            },
+            {
+              "id": "ddcf0b4e-705b-4e96-b4ea-f852bb9775e6",
+              "name": "location",
+              "value": "={{ $json.location }}",
+              "type": "string"
+            },
+            {
+              "id": "e32c30d5-d8d7-467c-b495-966613e087ed",
+              "name": "type",
+              "value": "={{ $json.type }}",
+              "type": "string"
+            },
+            {
+              "id": "98351e6a-476c-4711-8baa-efbe5e870b8e",
+              "name": "topic",
+              "value": "={{ $json.topic }}",
+              "type": "string"
+            },
+            {
+              "id": "44a1fb21-451e-4160-a8f5-f0ebc3effe74",
+              "name": "volumen_in_l",
+              "value": "={{ $json.volumen_in_l }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -160,
+        816
+      ],
+      "id": "f2dab459-ad7b-46c6-860b-688176e6797a",
+      "name": "def fields for db - Berlin"
+    },
+    {
+      "parameters": {
+        "table": "sensor_fill_level",
+        "columns": "=sensor_id, fill_level, distance, topic, new_fill_in",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        -944,
+        368
+      ],
+      "id": "3e29f529-fbaf-4063-977d-36506c49461f",
+      "name": "insert data in TimescaleDB",
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Alle JSON-Daten holen\nconst raw = items.map(i => i.json);\n\n// Nach sensor_id gruppieren\nconst bySensor = {};\nfor (const row of raw) {\n  const sid = row.sensor_id;\n  if (!bySensor[sid]) {\n    bySensor[sid] = [];\n  }\n  bySensor[sid].push(row);\n}\n\nconst results = [];\n\nfor (const sensorId of Object.keys(bySensor)) {\n  const data = bySensor[sensorId];\n\n  // Nach Zeit sortieren (älteste zuerst)\n  data.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());\n\n  // Wenn aus irgendeinem Grund keine Daten da sind, überspringen\n  if (data.length === 0) continue;\n\n  // Variablen für Berechnung\n  let totalFill = 0;\n  let totalHours = 0;\n  let lastLevel = data[0].fill_level;\n  let lastTime = new Date(data[0].created_at);\n\n  for (let i = 1; i < data.length; i++) {\n    const currLevel = data[i].fill_level;\n    const currTime = new Date(data[i].created_at);\n\n    // Wenn signifikanter Abfall erkannt → Entleerung, starte neu\n    if (currLevel < lastLevel - 20) { // z. B. Abfall >20% → Müll wurde geleert\n      lastLevel = currLevel;\n      lastTime = currTime;\n      continue;\n    }\n\n    // Nur positive Steigerung berücksichtigen\n    const diff = currLevel - lastLevel;\n    const hours = (currTime.getTime() - lastTime.getTime()) / (1000 * 3600);\n\n    if (diff > 0 && hours > 0) {\n      totalFill += diff;\n      totalHours += hours;\n    }\n\n    lastLevel = currLevel;\n    lastTime = currTime;\n  }\n\n  // Füllrate pro Stunde\n  const fillRatePerHour = totalHours > 0 ? totalFill / totalHours : 0;\n\n  // Letzter Füllstand / letzte Zeile für diesen Sensor\n  const lastEntry = data[data.length - 1];\n  const currentLevel = lastEntry.fill_level;\n\n  // Geschätzte Zeit bis voll\n  const estimatedHoursToFull =\n    fillRatePerHour > 0 ? (100 - currentLevel) / fillRatePerHour : null;\n\n  // Ergebnis für diesen Sensor pushen\n  results.push({\n    json: {\n      sensor_id: sensorId,\n      current_fill: currentLevel,\n      fill_rate_per_hour: fillRatePerHour,\n      estimated_hours_to_full: estimatedHoursToFull,\n      location: lastEntry.location,\n      type: lastEntry.type,\n    },\n  });\n}\n\n// Alle Sensor-Ergebnisse zurückgeben\nreturn results;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        800
+      ],
+      "id": "0ad77cde-91c8-4a4b-bb0d-e5b02af7a8a5",
+      "name": "AVG Berechnung"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT fill_level, created_at \n  FROM sensor_fill_level\n  WHERE sensor_id = '{{ $json.sensor_id }}'\n  ORDER BY created_at DESC\n  LIMIT 1;\n",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        -496,
+        384
+      ],
+      "id": "95e8f454-3100-40d0-995b-33c4cda9b59d",
+      "name": "Abfrage letzten Füllstand des Sensors",
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "96b5f61e-0f77-4094-8e7d-f90a6a5170e2",
+              "name": "last_fill_level",
+              "value": "={{ $json.fill_level }}",
+              "type": "number"
+            },
+            {
+              "id": "2fe36f62-d05d-4173-ac5a-e6ffb202df7a",
+              "name": "new_fill_level",
+              "value": "={{ $('insert data in TimescaleDB').item.json.new_fill_in }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -304,
+        384
+      ],
+      "id": "79352b45-175b-45f5-b7a6-8d61cf01c95f",
+      "name": "def last_fill_level , def new_fill_level"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4d3359c8-3730-4223-ba57-07c24824a181",
+              "leftValue": "={{ $json.new_fill_level }}",
+              "rightValue": "={{ $json.last_fill_level - 20}}",
+              "operator": {
+                "type": "number",
+                "operation": "lte"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -112,
+        384
+      ],
+      "id": "0e476be2-465e-401a-8b06-37caea137958",
+      "name": "wenn neuer Wert kleiner als alter - also geleert wurde"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "4e2fae1d-09c2-409e-ae65-3704a7fe089e",
+              "name": "sensor_id",
+              "value": "={{ $('def fields for db - Berlin').item.json.sensor_id }}",
+              "type": "string"
+            },
+            {
+              "id": "edbcc5ae-986a-48a4-901c-f0f2c3110649",
+              "name": "created_at",
+              "value": "={{ $('def fields for db - Berlin').item.json.created_at }}",
+              "type": "string"
+            },
+            {
+              "id": "2071e81f-52f9-4cc6-94c6-d8f6fffe5072",
+              "name": "fill_before_empty",
+              "value": "={{ $('def last_fill_level , def new_fill_level').item.json.last_fill_level }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        112,
+        336
+      ],
+      "id": "bea236a5-ebc0-4e19-bcd8-d210f8a208bc",
+      "name": "def values for table sensor_last_empty"
+    },
+    {
+      "parameters": {
+        "content": "## Neue Sensordaten in DB\n\n1. Daten von MQTT werfen formatiert\n2. Es wird geprüft ob die Tonne geleert wurde \n--> true : aktuelles Datum mit sensor_id wird in extra Tabelle gespeichert\n3. neuer Sensorwert wird in Tabelle gespeichert\n\n",
+        "height": 496,
+        "width": 1632
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1136,
+        720
+      ],
+      "typeVersion": 1,
+      "id": "a8a335ee-4b49-423a-a6dd-971c96d932aa",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## Berechnung AVG Filling Time\n1. Abfrage der Sensordaten\n2. Berechnung der Durchschnittsdauer pro Entleerungszyklus und Sensor\n3. Speicherung der neuen Info in sensor_avg_fill_rate",
+        "height": 576,
+        "width": 1344,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        512,
+        640
+      ],
+      "typeVersion": 1,
+      "id": "53bfcc8d-7b78-4b9f-acbe-7f9e6b180876",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT *\nFROM sensor_fill_level\nWHERE sensor_id = '{{ $json.sensor_id }}'\nORDER BY created_at DESC;",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        544,
+        800
+      ],
+      "id": "17f96e86-5cb2-4cf0-b44b-2e7df5614fbc",
+      "name": "Abfrage aller Sensordaten aus der Tabelle sensor_data",
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  '{{ $json.sensor_id }}' AS sensor_id,\n  COALESCE((\n    SELECT COUNT(*)\n    FROM sensor_last_empty\n    WHERE sensor_id = '{{ $json.sensor_id }}'\n  ), 0) AS pickup_count;\n",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        544,
+        976
+      ],
+      "id": "99c28aad-35db-4abb-97db-0ef3065d31b5",
+      "name": "Aktuelle Anzahl der Abholungen",
+      "executeOnce": false,
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "fieldsToMatchString": "sensor_id",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1184,
+        960
+      ],
+      "id": "d78923f7-d443-426d-88ff-bba982526764",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "94e492b2-9cd7-49f5-b683-1a6eb2dfa75e",
+              "name": "sensor_id",
+              "value": "={{ $json.sensor_id }}",
+              "type": "string"
+            },
+            {
+              "id": "aaee7ca5-0863-4dbf-90e5-6b9261564def",
+              "name": "last_fill_level",
+              "value": "={{ $json.current_fill }}",
+              "type": "number"
+            },
+            {
+              "id": "6e6413be-9d6c-4be2-b49d-f25bbb32ecd3",
+              "name": "avg_fill_rate_per_hour",
+              "value": "={{ $json.fill_rate_per_hour }}",
+              "type": "number"
+            },
+            {
+              "id": "9df881a3-9f3a-4c6c-96b3-6cf311f22b6e",
+              "name": "estimated_hours_to_full",
+              "value": "={{ $json.estimated_hours_to_full }}",
+              "type": "number"
+            },
+            {
+              "id": "7e2ffa19-6d36-4664-ad43-e15005329fbb",
+              "name": "empty_count",
+              "value": "={{ $json.pickup_count }}",
+              "type": "number"
+            },
+            {
+              "id": "ed89b089-ca98-442a-99c3-7c32979b22d4",
+              "name": "updated_at",
+              "value": "={{ $now.toISO().split('Z')[0] }}",
+              "type": "string"
+            },
+            {
+              "id": "8fe9e595-d507-4792-a78d-be3451521464",
+              "name": "estimated_full_time",
+              "value": "={{ $json.estimated_full_time }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1344,
+        960
+      ],
+      "id": "a71b0882-c481-4df8-93b2-6182617f5ae8",
+      "name": "def values for db"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const fillLevel =  $input.first().json.current_fill  // aktueller Füllstand (z.B. %)\n  const fillRate = $input.first().json.fill_rate_per_hour   // schon berechnet\n  const hoursToFull = item.json.estimated_hours_to_full; // schon berechnet\n\n  // Berechne den geschätzten Zeitpunkt, wann die Tonne voll ist\n  const now = new Date();\n  const estimatedFullTime = new Date(now.getTime() + hoursToFull * 3600 * 1000);\n\n  return {\n    json: {\n      ...item.json,\n      estimated_full_time: estimatedFullTime.toISOString()\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        976,
+        800
+      ],
+      "id": "71d92649-1cbe-4ea3-b4f9-a84d3891f636",
+      "name": "Berechnung estimated_full_time"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO sensor_avg_fill_rate (\n    sensor_id,\n    avg_fill_rate_per_hour,\n    last_fill_level,\n    estimated_hours_to_full,\n    estimated_full_time,\n    empty_count\n) VALUES (\n    '{{ $json.sensor_id }}',\n    {{ $json.avg_fill_rate_per_hour }},\n    {{ $json.last_fill_level }},\n    {{ $json.estimated_hours_to_full }},\n    '{{ $('Berechnung estimated_full_time').item.json.estimated_full_time }}',\n    {{ $json.empty_count }}\n)\nON CONFLICT (sensor_id) DO UPDATE\nSET\n    avg_fill_rate_per_hour = EXCLUDED.avg_fill_rate_per_hour,\n    last_fill_level = EXCLUDED.last_fill_level,\n    estimated_hours_to_full = EXCLUDED.estimated_hours_to_full,\n    estimated_full_time = EXCLUDED.estimated_full_time,\n    empty_count = EXCLUDED.empty_count,\n    changed_at = NOW();\n",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        1536,
+        960
+      ],
+      "id": "5fd8b147-b9d0-4dae-bf5b-ccfaafc89fd5",
+      "name": "TimescaleDB",
+      "alwaysOutputData": true,
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "75d4ade1-7c69-4916-9d5a-cf015a2eb0a0",
+              "name": "sensor_id",
+              "value": "={{ $json.deviceInfo.tenantId }}",
+              "type": "string"
+            },
+            {
+              "id": "261c8d74-287c-4625-9bfb-d9db676ab451",
+              "name": "created_at",
+              "value": "={{ $json.time }}",
+              "type": "string"
+            },
+            {
+              "id": "ae8d3b04-27ed-41eb-80f9-e1c0f6fd981c",
+              "name": "lon",
+              "value": "={{ $json.deviceInfo.tags.longitude }}",
+              "type": "number"
+            },
+            {
+              "id": "9e364e50-ecb6-4056-943d-883ce4701b17",
+              "name": "lat",
+              "value": "={{ $json.deviceInfo.tags.latitude }}",
+              "type": "number"
+            },
+            {
+              "id": "ddcf0b4e-705b-4e96-b4ea-f852bb9775e6",
+              "name": "location",
+              "value": "={{ $json.deviceInfo.deviceName.split(' - ')[1].trim()}}",
+              "type": "string"
+            },
+            {
+              "id": "e32c30d5-d8d7-467c-b495-966613e087ed",
+              "name": "type",
+              "value": "={{ $json.deviceInfo.deviceName.split(' - ')[0].trim()}}\n",
+              "type": "string"
+            },
+            {
+              "id": "a97a4780-361a-4aa6-8794-7bce703b7874",
+              "name": "fill_level",
+              "value": "={{ $json.object.data.payload.fillinglvl }}",
+              "type": "number"
+            },
+            {
+              "id": "5815f004-2bc4-4814-a806-ac2c2db5f599",
+              "name": "topic",
+              "value": "application/12abc8b5-d294-4759-b887-dbf59f26bef2/device",
+              "type": "string"
+            },
+            {
+              "id": "ef1eb636-8b24-41f0-939d-ea96ed032ba5",
+              "name": "volumen_in_l",
+              "value": 5000,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -368,
+        -192
+      ],
+      "id": "2c975a59-fcd7-401c-b99b-c8e275ab535f",
+      "name": "def fields for db - Berlin1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "438fdaf7-2bb5-43e3-b4f7-6f7cd97aa290",
+              "leftValue": "={{ $json.exists }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "ignoreCase": false
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1072,
+        288
+      ],
+      "id": "2a9bd2d8-6f95-48bd-b099-f357ed28eae8",
+      "name": "Wenn Sensor schon existiert"
+    },
+    {
+      "parameters": {
+        "content": "## Neuer Sensordaten in DB von SWP\ninkl. Prüfung ob Sensor bereits vorhanden",
+        "height": 400,
+        "width": 1632
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1136,
+        -288
+      ],
+      "typeVersion": 1,
+      "id": "4a11d7bb-c2cb-44fc-b410-2386664be76f",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "## sensor_id exists?\n",
+        "height": 896,
+        "width": 1344,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        512,
+        -272
+      ],
+      "typeVersion": 1,
+      "id": "f958e3be-7987-495f-b1a5-10c7bdb013ed",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO sensor_data (\n    sensor_id,\n    lon,\n    lat,\n    location,\n    type,\n    topic,\n    volumen_in_l\n) VALUES (\n    '{{ $json.sensor_id }}',\n    {{ $json.lon }},\n    {{ $json.lat }},\n    '{{ $json.location }}',\n    '{{ $json.type }}',\n  '{{ $json.topic }}',\n  {{ $json.volumen_in_l }}\n);\n",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        1824,
+        224
+      ],
+      "id": "6ccab4b7-c9de-491c-8905-36cbbd0d5849",
+      "name": "insert sensor in sensor_data",
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Entleerung seit letzter Abholung?\n",
+        "height": 560,
+        "width": 1056,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -560,
+        144
+      ],
+      "typeVersion": 1,
+      "id": "d99f5050-6cc9-49b2-a469-a4cd10f4e460",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "table": "sensor_last_empty",
+        "columns": "sensor_id, created_at, fill_before_empty",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        288,
+        336
+      ],
+      "id": "4403b006-755d-4c34-bda8-7f89e291223b",
+      "name": "insert if trash was emptied",
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1584,
+        304
+      ],
+      "id": "12f7013d-c17a-4091-a4ec-56589931bf79",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "content": "##SAve în DB\n",
+        "height": 560,
+        "width": 560
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1136,
+        144
+      ],
+      "typeVersion": 1,
+      "id": "6fac233c-3c28-4754-b63f-edfb7b9530a9",
+      "name": "Sticky Note5"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  EXISTS (\n    SELECT 1 \n    FROM sensor_data \n    WHERE sensor_id = '{{ $json.sensor_id }}'\n  ) AS sensor_exists;\n",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        720,
+        288
+      ],
+      "id": "a2188b80-f2a6-471b-9bf4-c1dc4011d212",
+      "name": "sensor_id in sensor_data exists",
+      "alwaysOutputData": false,
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "30658d16-af46-4c92-8ce1-91578aa0788e",
+              "name": "exists",
+              "value": "={{ $json.sensor_exists }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        880,
+        288
+      ],
+      "id": "b8e84472-0e15-4ecd-9d66-97d22cb294f3",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1584,
+        112
+      ],
+      "id": "a9c0da79-5f7c-42ff-a030-c9e51bc58be3",
+      "name": "No Operation, do nothing"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        112,
+        560
+      ],
+      "id": "812248e2-a3d7-4e11-b79e-ec7002f3b1f7",
+      "name": "No Operation, do nothing1"
+    },
+    {
+      "parameters": {
+        "sendTo": "<EMPFAENGER_EMAIL>",
+        "subject": "=Smart-Trash: New Sensor ",
+        "message": "Es wurde ein neuer Sensor mit folgenden Parametern gefunden und neu angelegt.",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2128,
+        272
+      ],
+      "id": "2173f2f4-9004-471c-99a0-0510b3702e63",
+      "name": "Send a message",
+      "webhookId": "80b2438a-64d7-454c-a180-f0764ab103ff",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "MOiihFIM3OO9VPHZ",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "table": "sensor_avg_fill_rate",
+        "columns": "sensor_id",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        1824,
+        400
+      ],
+      "id": "6f227e66-3b21-4777-8c17-34f1b5bc7878",
+      "name": "Zeile in sensor_avg_fill_rate einfügen",
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT *\nFROM (\n    SELECT DISTINCT ON (s.sensor_id)\n        s.sensor_id,\n        s.lat,\n        s.lon,\n        l.fill_level,\n        l.created_at\n    FROM sensor_data s\n    JOIN sensor_fill_level l ON s.sensor_id = l.sensor_id\n    ORDER BY s.sensor_id, l.created_at DESC\n) AS latest\nWHERE latest.fill_level >= 45;",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        -688,
+        3296
+      ],
+      "id": "13656e3c-f841-4352-b5a7-8fbbacfaa84b",
+      "name": "sensor über 50",
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Reihenfolge zur Entleerung\n1. Sensoren fill_level > x% abfragen\n2. Vorbereitung API Abfrage, betroffenen Tonnen in Format bringen\n3. Abfrage der API - Reihenfolge (Optimization)\n4. API Output in JSON\nAbzweig 1: \n\t1. abfrage der sensor_id für die lat und lon aus der Reihenfolge der API\n\t2. Array aus sensor_ids (in der richtigen Reihenfolge)\nAbzweig 2:  \t1. Array der Koordinaten als Vorbereitung für Routenberechung\n\t2. API1: Route als JSON, API2: Route als Geiojson (inkl. Umwandlung in detaillierte Koordinaten für die Route)\n5. Merge alles zusammen\n6. Variablen für DB vorbereiten\n7. Route in DB speichern",
+        "height": 960,
+        "width": 3008,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1136,
+        2768
+      ],
+      "typeVersion": 1,
+      "id": "c3e8f70a-62ef-499f-8e5a-207a1a63e441",
+      "name": "Sticky Note6"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  {\n    json: {\n      jobs: items.map((item, index) => ({\n        id: index + 1,\n        location: [item.json.lon, item.json.lat],\n      })),\n      vehicles: [\n        {\n          id: 1,\n          profile: \"driving-car\",\n          start: [0.0, 0.0] /* <START_LON>, <START_LAT> */, // Startpunkt\n        },\n      ],\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -512,
+        3296
+      ],
+      "id": "083755f3-b25b-41da-a14c-59d3d34f41e2",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = [];\nconst route_id = new Date().toISOString();\n\nfor (const step of $json.routes[0].steps) {\n  items.push({\n    json: {\n      route_id,\n      type: step.type,\n      job_id: step.job || null,\n      longitude: step.location[0],\n      latitude: step.location[1],\n      arrival: step.arrival,\n      duration: step.duration\n    }\n  });\n}\nreturn items;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        3296
+      ],
+      "id": "12edd024-8f4e-4c72-a5c1-42c11d9cf40f",
+      "name": "Code: API Output in JSON1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Input: items aus vorherigem Node oder JSON\nconst coordinates = items.map(item => [item.json.longitude, item.json.latitude]);\n\nreturn [\n  {\n    json: {\n      coordinates: coordinates\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        144,
+        3296
+      ],
+      "id": "ec265a3d-0960-405d-bb2f-d30df1b4574b",
+      "name": "code für direction API (as array)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openrouteservice.org/optimization",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "<ORS_API_KEY>"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"jobs\": {{$json.jobs.toJsonString()}},\n  \"vehicles\": {{$json.vehicles.toJsonString()}}\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -240,
+        3296
+      ],
+      "id": "fb0a1662-9d77-43fb-bc0f-b531352ebf56",
+      "name": "openrouteservice API optimise"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.openrouteservice.org/v2/directions/driving-car/json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "<ORS_API_KEY>"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"coordinates\":{{ $json.coordinates.toJsonString() }}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        3312
+      ],
+      "id": "34e2166f-9c4a-42aa-b953-c869c3f662a9",
+      "name": "openrouteserivce API directions"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 3,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        896,
+        3312
+      ],
+      "id": "73a108fb-57b7-47d4-bdd5-a0773f251003",
+      "name": "Merge2"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT  sensor_id\nFROM sensor_data\nWHERE lon = {{ $json.longitude }}\n  AND lat = {{ $json.latitude }};\n",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        384,
+        3120
+      ],
+      "id": "e4799abb-b0e3-46dc-820c-64185f81bafd",
+      "name": "get sensor_id",
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Alle Inputdaten holen\nconst items = $input.all();\n\n// Sensor-IDs sammeln\nlet allSensors = [];\n\nfor (const item of items) {\n  let data = item.json;\n\n  // Falls die Daten in einer Property wie 'data' stecken\n  if (data.data) data = data.data;\n\n  // Falls data als String kommt → JSON parsen\n  if (typeof data === 'string') {\n    try {\n      data = JSON.parse(data);\n    } catch (e) {\n      throw new Error('Fehler beim Parsen von JSON: ' + e.message);\n    }\n  }\n\n  // Einzelnes Objekt in Array packen\n  if (!Array.isArray(data)) data = [data];\n\n  // Sensor-IDs extrahieren\n  for (const entry of data) {\n    if (entry.sensor_id) allSensors.push(entry.sensor_id);\n  }\n}\n\n// Duplikate entfernen\nconst uniqueSensors = [...new Set(allSensors)];\n\n// Ergebnis zurückgeben – ready für PostgreSQL jsonb\nreturn [{\n  json: {\n    affected_bins: uniqueSensors\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        592,
+        3120
+      ],
+      "id": "9acad6fb-d809-496c-873a-ccb7bb1b2961",
+      "name": "Array of sensor_ids"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openrouteservice.org/v2/directions/driving-car/geojson",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "<ORS_API_KEY>"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"coordinates\":{{ $json.coordinates.toJsonString() }}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        384,
+        3504
+      ],
+      "id": "286ff034-ad54-4bb8-beb7-146bfaec09e6",
+      "name": "openrouteserivce API directions as Geojson"
+    },
+    {
+      "parameters": {
+        "jsCode": "const geojsonData = items[0].json.data; \nconst parsed = JSON.parse(geojsonData);\nconst coordinates = parsed.features[0].geometry.coordinates;\n\n// Stringify, damit Postgres JSONB es akzeptiert\nreturn [\n  {\n    json: {\n      route_coords: JSON.stringify(coordinates)\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        3504
+      ],
+      "id": "c54e531d-f670-4920-b7d4-4b0fd2eca26e",
+      "name": "Code2"
+    },
+    {
+      "parameters": {
+        "table": "routes",
+        "columns": "=route_coords, affected_bins, distance, duration ",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        1504,
+        3328
+      ],
+      "id": "4a9fa5d5-16ee-4652-9a03-e40be42591af",
+      "name": "new route in route_plans1",
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 5
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1072,
+        3296
+      ],
+      "id": "7624e69d-e9ae-47df-ae57-0c8c656c23fa",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9e3d476d-f39d-4a76-8d6f-686ef928fbf9",
+              "name": "route_coords",
+              "value": "={{ $json.route_coords }}",
+              "type": "string"
+            },
+            {
+              "id": "41c73b6d-fff5-46a7-a513-f4d1575b7b7b",
+              "name": "affected_bins",
+              "value": "={{ $json.affected_bins }}",
+              "type": "string"
+            },
+            {
+              "id": "4ec20dfb-7879-4add-a15d-9fade4de82a3",
+              "name": "distance",
+              "value": "={{ $json.routes[0].summary.distance }}",
+              "type": "number"
+            },
+            {
+              "id": "f0acd265-f1e4-4cdf-8594-cfb1686eff6a",
+              "name": "duration",
+              "value": "={{ $json.routes[0].summary.duration }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1120,
+        3328
+      ],
+      "id": "8ccecb40-5923-4d0a-b471-e979bd5250ec",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1056,
+        1616
+      ],
+      "id": "a4a3226f-3708-441e-89f8-7a8dc55c5399",
+      "name": "Schedule Trigger1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8c66eb7b-1e0b-486e-a56b-e7de57eb6d73",
+              "leftValue": "={{ $json.fill_level }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -432,
+        1616
+      ],
+      "id": "93fd2ffa-6f62-4a67-b1fa-838e1ccb70e0",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "fieldsToMatchString": "sensor_id",
+        "joinMode": "keepEverything",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -224,
+        1712
+      ],
+      "id": "87641b66-8d55-4759-be4b-6acf336741bc",
+      "name": "Merge3"
+    },
+    {
+      "parameters": {
+        "content": "## Sensordaten von Sensor_daily_delta\n1. neue werte für heute aus der DB holen\n2. werte von gestern holen\n WENN keine da, dann einfach neue Werte rein\n WENN welche da, dann zusammenrechnen",
+        "height": 816,
+        "width": 1632,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1136,
+        1232
+      ],
+      "typeVersion": 1,
+      "id": "ed07c67c-aadc-408b-a98e-c713d0eb5f4c",
+      "name": "Sticky Note7"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6ea3030a-374e-4082-b8bb-7848fd1462c6",
+              "name": "sensor_id",
+              "value": "={{ $json.sensor_id }}",
+              "type": "string"
+            },
+            {
+              "id": "e5e7229f-ea9f-44c6-9f73-491e7997dae8",
+              "name": "created_at",
+              "value": "={{ $json.ts }}",
+              "type": "string"
+            },
+            {
+              "id": "23a8a0d6-d2de-49dd-8bec-a6addb1f488c",
+              "name": "fill_level",
+              "value": "={{ Number($json.fill_level)  +  Number($json.new_fill_in) }}",
+              "type": "number"
+            },
+            {
+              "id": "c640da9d-2719-48d8-8958-07dba5b9c3c1",
+              "name": "new_fill_in",
+              "value": "={{ $json.new_fill_in }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        272,
+        1760
+      ],
+      "id": "c644e041-3b3c-4f57-abb8-6a194174b423",
+      "name": "fields: new level"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6ea3030a-374e-4082-b8bb-7848fd1462c6",
+              "name": "sensor_id",
+              "value": "={{ $('Abfrage new fill_in').item.json.sensor_id }}",
+              "type": "string"
+            },
+            {
+              "id": "e5e7229f-ea9f-44c6-9f73-491e7997dae8",
+              "name": "created_at",
+              "value": "={{ $('Abfrage new fill_in').item.json.ts }}",
+              "type": "string"
+            },
+            {
+              "id": "23a8a0d6-d2de-49dd-8bec-a6addb1f488c",
+              "name": "fill_level",
+              "value": "={{ $('Abfrage new fill_in').item.json.new_fill_in }}",
+              "type": "string"
+            },
+            {
+              "id": "8accb62f-e757-471d-b18a-43ba314da45b",
+              "name": "new_fill_in",
+              "value": "={{ $('Abfrage new fill_in').item.json.new_fill_in }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -208,
+        1280
+      ],
+      "id": "3302597b-5e2a-4ffe-b057-b9970cec2299",
+      "name": "fields: new level for new sensor"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO sensor_avg_fill_rate (\n    sensor_id,\n    avg_fill_rate_per_hour,\n    last_fill_level,\n    estimated_hours_to_full,\n    estimated_full_time,\n    empty_count\n) VALUES (\n    '{{ $json.sensor_id }}',\n    {{ $json.avg_fill_rate_per_hour }},\n    {{ $json.last_fill_level }},\n    {{ $json.estimated_hours_to_full }},\n    '{{ $('Berechnung estimated_full_time').item.json.estimated_full_time }}',\n    {{ $json.empty_count }}\n)\nON CONFLICT (sensor_id) DO UPDATE\nSET\n    avg_fill_rate_per_hour = EXCLUDED.avg_fill_rate_per_hour,\n    last_fill_level = EXCLUDED.last_fill_level,\n    estimated_hours_to_full = EXCLUDED.estimated_hours_to_full,\n    estimated_full_time = EXCLUDED.estimated_full_time,\n    empty_count = EXCLUDED.empty_count;\n",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        1664,
+        1104
+      ],
+      "id": "771baf38-d040-4092-a4b7-174116408a6b",
+      "name": "TimescaleDB3",
+      "alwaysOutputData": true,
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = items.map(i => i.json);\n\n// Sortiere nach Zeit (älteste zuerst)\ndata.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());\n\n// Variablen für Berechnung\nlet totalFill = 0;\nlet totalHours = 0;\nlet lastLevel = data[0].fill_level;\nlet lastTime = new Date(data[0].created_at);\n\nfor (let i = 1; i < data.length; i++) {\n    const currLevel = data[i].fill_level;\n    const currTime = new Date(data[i].created_at);\n\n    // Wenn signifikanter Abfall erkannt → Entleerung, starte neu\n    if (currLevel < lastLevel - 20) { // z. B. Abfall >20% → Müll wurde geleert\n        lastLevel = currLevel;\n        lastTime = currTime;\n        continue;\n    }\n\n    // Nur positive Steigerung berücksichtigen\n    const diff = currLevel - lastLevel;\n    const hours = (new Date(currTime).getTime() - new Date(lastTime).getTime()) / (1000*3600);\n\n\n    if (diff > 0 && hours > 0) {\n        totalFill += diff;\n        totalHours += hours;\n    }\n\n    lastLevel = currLevel;\n    lastTime = currTime;\n}\n\n// Füllrate pro Stunde\nconst fillRatePerHour = totalHours > 0 ? totalFill / totalHours : 0;\n\n// Letzter Füllstand\nconst currentLevel = data[data.length-1].fill_level;\n\n// Geschätzte Zeit bis voll\nconst estimatedHoursToFull = fillRatePerHour > 0 ? (100 - currentLevel) / fillRatePerHour : null;\n\nreturn [\n    {\n        json: {\n            sensor_id: data[data.length-1].sensor_id,\n            current_fill: currentLevel,\n            fill_rate_per_hour: fillRatePerHour,\n            estimated_hours_to_full: estimatedHoursToFull,\n            location: data[data.length-1].location,\n            type: data[data.length-1].type\n        }\n    }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        1088
+      ],
+      "id": "7f979371-b56c-477c-83b7-41b7f266d275",
+      "name": "AVG Berechnung1"
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {
+          "fileName": "=Müllaufkommen  {{ $today.year }}"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        -288,
+        2256
+      ],
+      "id": "9596a491-beac-4f0f-b282-6c5d1a60b792",
+      "name": "Convert to File"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  location AS \"Campus\",\n  type AS \"Müllart\",\n  SUM(d.new_fill_in) AS \"Summe\"\nFROM sensor_data s\nJOIN sensor_fill_level d\n  ON s.sensor_id = d.sensor_id\nGROUP BY location, type\nORDER BY location, type;\n",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        -816,
+        2256
+      ],
+      "id": "65c224e2-6c2c-4e75-bd98-871eb480e16b",
+      "name": "Abfrage Müllaufkommen pro Location",
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "=Müllaufkommen  {{ $today.year }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "<DRIVE_FOLDER_ID>",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -64,
+        2144
+      ],
+      "id": "6dad8e03-3ceb-4656-8ac2-f9c12db7def2",
+      "name": "Upload file",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "fWgpFi3XJ33GmrtD",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "<EMPFAENGER_EMAIL>",
+        "subject": "Müllbericht",
+        "message": "Anbei der Müllbericht",
+        "options": {
+          "attachmentsUi": {
+            "attachmentsBinary": [
+              {}
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -64,
+        2336
+      ],
+      "id": "877edbff-a03e-4045-955a-b8449792aee2",
+      "name": "Send a message1",
+      "webhookId": "844f4d87-b157-4fd3-a6de-3cf50af6e3f8",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "MOiihFIM3OO9VPHZ",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Export der Sensordaten \n",
+        "height": 480,
+        "width": 1280
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1136,
+        2064
+      ],
+      "typeVersion": 1,
+      "id": "b4de2a60-d4f6-42a9-9e14-6a3422da8759",
+      "name": "Sticky Note8"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT sensor_id, ts, new_fill_in, simulation number\nFROM sensor_daily_delta\nWHERE ts::date = CURRENT_DATE \n--  AND simulation_number = 2;",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        -880,
+        1696
+      ],
+      "id": "73dada4d-524d-47fa-a208-b7b3927aff11",
+      "name": "Abfrage new fill_in",
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  '{{ $json.sensor_id }}' AS sensor_id,\n  COALESCE(s.fill_level, 0) AS fill_level,\n  s.created_at\nFROM (\n  SELECT 1\n) AS dummy\nLEFT JOIN sensor_fill_level s\n  ON s.sensor_id = '{{ $json.sensor_id }}'\n AND s.created_at::date = CURRENT_DATE - 1\nLIMIT 1;\n",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        -688,
+        1616
+      ],
+      "id": "2881acc7-fdb3-4209-9c53-63ebad775451",
+      "name": "Abfrage value yesterday",
+      "alwaysOutputData": true,
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "86cf6682-3f0a-4400-b92b-16b7afc2b45f",
+              "leftValue": "={{ $json.fill_level }}",
+              "rightValue": 90,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        608,
+        1440
+      ],
+      "id": "f510b579-7348-4202-8d35-af49cc11a4f8",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "content": "## wenn entleert werden muss\n",
+        "height": 272,
+        "width": 1344,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        512,
+        1232
+      ],
+      "typeVersion": 1,
+      "id": "d42a194e-e191-4650-9d69-ab25d3888aac",
+      "name": "Sticky Note9"
+    },
+    {
+      "parameters": {
+        "table": "sensor_fill_level",
+        "columns": "sensor_id, created_at, fill_level, new_fill_in",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        960,
+        1312
+      ],
+      "id": "82860288-6356-4baa-b246-4c17b5abd1ea",
+      "name": "sensordaten in DB",
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "table": "sensor_fill_level",
+        "columns": "sensor_id, created_at, fill_level, new_fill_in",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        896,
+        1600
+      ],
+      "id": "91360c8d-6c09-415e-9262-6d84bbd0243c",
+      "name": "einfach auffüllen",
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7d42574f-1836-422e-b027-d1a08f3b7e4f",
+              "name": "sensor_id",
+              "value": "={{ $json.sensor_id }}",
+              "type": "string"
+            },
+            {
+              "id": "cc9d23ef-a53b-4b3c-80ce-094812e19e29",
+              "name": "created_at",
+              "value": "={{ $json.created_at }}",
+              "type": "string"
+            },
+            {
+              "id": "b6a2a6b2-9d9a-4026-bce1-9d833ea867bb",
+              "name": "fill_level",
+              "value": "={{ $json.new_fill_in }}",
+              "type": "number"
+            },
+            {
+              "id": "e33b9144-7470-45dc-83f6-27896a742e96",
+              "name": "new_fill_in",
+              "value": "={{ $json.new_fill_in }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        784,
+        1312
+      ],
+      "id": "a6a35c48-2179-481e-9242-551117248b36",
+      "name": "Edit Fields2"
+    },
+    {
+      "parameters": {
+        "table": "sensor_last_empty",
+        "columns": "sensor_id, created_at, fill_before_empty",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        1584,
+        1312
+      ],
+      "id": "c0664b1c-70ef-445a-a7e2-f1d600aa668e",
+      "name": "TimescaleDB1",
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT fill_level, created_at, sensor_id\n  FROM sensor_fill_level\n  WHERE sensor_id = '{{ $json.sensor_id }}' AND created_at::date = CURRENT_DATE - 1\n  ORDER BY created_at DESC\n  LIMIT 1;",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.timescaleDb",
+      "typeVersion": 1,
+      "position": [
+        1136,
+        1312
+      ],
+      "id": "9cb53c6e-2d7e-4f99-bc42-976c6e5a2d61",
+      "name": "TimescaleDB2",
+      "credentials": {
+        "timescaleDb": {
+          "id": "Tbj57G2bHaaPETra",
+          "name": "TimescaleDB account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b517a8cf-ebe6-4a44-a3cf-9be386881272",
+              "name": "sensor_id",
+              "value": "={{ $json.sensor_id }}",
+              "type": "string"
+            },
+            {
+              "id": "d8fe5cc3-2ec6-495c-8cde-7db4c1ba78c0",
+              "name": "created_at",
+              "value": "={{ $('sensordaten in DB').item.json.created_at }}",
+              "type": "string"
+            },
+            {
+              "id": "b7907056-b372-4d6e-a13b-3590929c1fb8",
+              "name": "fill_before_empty",
+              "value": "={{ $json.fill_level }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1344,
+        1312
+      ],
+      "id": "fa26c8f6-0b5b-41f0-a818-2e902a87ff3f",
+      "name": "Edit Fields3"
+    },
+    {
+      "parameters": {
+        "content": "## neue Eintrag in DB\n",
+        "height": 528,
+        "width": 1344,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        512,
+        1520
+      ],
+      "typeVersion": 1,
+      "id": "4841b9cb-c856-4c44-97fd-d551a7698d13",
+      "name": "Sticky Note10"
+    },
+    {
+      "parameters": {
+        "path": "<WEBHOOK_PATH>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1088,
+        2176
+      ],
+      "id": "8c43ea07-7bb2-42d7-a27d-489897df8410",
+      "name": "Webhook",
+      "webhookId": "<WEBHOOK_ID>"
+    },
+    {
+      "parameters": {
+        "topics": "#",
+        "options": {
+          "jsonParseBody": true,
+          "onlyMessage": false,
+          "parallelProcessing": false
+        }
+      },
+      "type": "n8n-nodes-base.mqttTrigger",
+      "typeVersion": 1,
+      "position": [
+        -848,
+        -192
+      ],
+      "id": "fb0ea367-27ca-44ec-a154-26aafe9cbbd7",
+      "name": "MQTT Trigger",
+      "retryOnFail": false,
+      "notesInFlow": false,
+      "credentials": {
+        "mqtt": {
+          "id": "t5qL7J5qpXSoI5mv",
+          "name": "MQTT swap"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyHour"
+            }
+          ]
+        },
+        "filters": {
+          "q": "subject:müllaufkommen"
+        }
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -1088,
+        2336
+      ],
+      "id": "650e4cdd-2e20-4663-9d1e-f0d61f855d4b",
+      "name": "Gmail Trigger",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "MOiihFIM3OO9VPHZ",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "topics": "#",
+        "options": {
+          "jsonParseBody": false
+        }
+      },
+      "type": "n8n-nodes-base.mqttTrigger",
+      "typeVersion": 1,
+      "position": [
+        -864,
+        -512
+      ],
+      "id": "a8038b62-5728-45e7-a7bd-b5a52f582601",
+      "name": "MQTT Trigner TTN",
+      "credentials": {
+        "mqtt": {
+          "id": "Om1c54D11j7Zy8xL",
+          "name": "MQTT TTN"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## AuK\n",
+        "height": 480,
+        "width": 1648,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1136,
+        -784
+      ],
+      "typeVersion": 1,
+      "id": "59e12ad2-5355-40f8-a828-45ba7acd60fc",
+      "name": "Sticky Note11"
+    },
+    {
+      "parameters": {
+        "jsCode": "// inputData kommt automatisch aus dem vorherigen Node (z.B. MQTT Trigger)\nreturn items.map(item => {\n    // Die message ist als String im Feld item.json.message\n    let msg = item.json.message;\n\n    // String in gültiges JSON umwandeln\n    // erstens, evtl. fehlende Kommas und unnötige Leerzeichen korrigieren\n    msg = msg.replace(/,\\s*\\n\\s*\"/g, ',\\n\"') // korrigiert evtl. fehlende Kommas\n             .replace(/\\n\\s*}/g, '\\n}');    // korrigiert Zeilenende\n\n    // JSON parsen\n    let parsed;\n    try {\n        parsed = JSON.parse(msg);\n    } catch (e) {\n        // Falls Parsing fehlschlägt\n        parsed = { error: \"Parsing failed\", raw: msg };\n    }\n\n    return {\n        json: {\n            topic: item.json.topic, // original topic behalten\n            ...parsed               // alle Felder aus der Message\n        }\n    };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -624,
+        -512
+      ],
+      "id": "954c5ee4-c294-4dc6-992f-587d47b157cf",
+      "name": "MQTT message to JSON - Berlin1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "75d4ade1-7c69-4916-9d5a-cf015a2eb0a0",
+              "name": "sensor_id",
+              "value": "={{ $json.end_device_ids.device_id }}",
+              "type": "string"
+            },
+            {
+              "id": "261c8d74-287c-4625-9bfb-d9db676ab451",
+              "name": "created_at",
+              "value": "={{ $json.uplink_message.rx_metadata[0].time }}",
+              "type": "string"
+            },
+            {
+              "id": "ae8d3b04-27ed-41eb-80f9-e1c0f6fd981c",
+              "name": "lon",
+              "value": "=0",
+              "type": "number"
+            },
+            {
+              "id": "9e364e50-ecb6-4056-943d-883ce4701b17",
+              "name": "lat",
+              "value": "=0",
+              "type": "number"
+            },
+            {
+              "id": "ddcf0b4e-705b-4e96-b4ea-f852bb9775e6",
+              "name": "location",
+              "value": "=leer",
+              "type": "string"
+            },
+            {
+              "id": "a97a4780-361a-4aa6-8794-7bce703b7874",
+              "name": "fill_level",
+              "value": "={{ 100-(($json.uplink_message.decoded_payload.distance1_cm / $json.uplink_message.decoded_payload.distance2_cm) *100)}}",
+              "type": "number"
+            },
+            {
+              "id": "5815f004-2bc4-4814-a806-ac2c2db5f599",
+              "name": "topic",
+              "value": "={{ $json.topic }}",
+              "type": "string"
+            },
+            {
+              "id": "ef1eb636-8b24-41f0-939d-ea96ed032ba5",
+              "name": "volumen_in_l",
+              "value": 1100,
+              "type": "number"
+            },
+            {
+              "id": "681a4187-f3c4-4ce2-9df8-88445eea3af4",
+              "name": "distance",
+              "value": "={{ $json.uplink_message.decoded_payload.distance1_cm }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -384,
+        -512
+      ],
+      "id": "dffd13bf-1259-4d5b-a943-4c9d04b3835d",
+      "name": "def fields for db - Berlin2"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "MQTT Trigger - Berlin": {
+      "main": [
+        [
+          {
+            "node": "MQTT message to JSON - Berlin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MQTT message to JSON - Berlin": {
+      "main": [
+        [
+          {
+            "node": "def fields for db - Berlin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "def fields for db - Berlin": {
+      "main": [
+        [
+          {
+            "node": "sensor_id in sensor_data exists",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Abfrage aller Sensordaten aus der Tabelle sensor_data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Aktuelle Anzahl der Abholungen",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "insert data in TimescaleDB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AVG Berechnung": {
+      "main": [
+        [
+          {
+            "node": "Berechnung estimated_full_time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "insert data in TimescaleDB": {
+      "main": [
+        [
+          {
+            "node": "Abfrage letzten Füllstand des Sensors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Abfrage letzten Füllstand des Sensors": {
+      "main": [
+        [
+          {
+            "node": "def last_fill_level , def new_fill_level",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "def last_fill_level , def new_fill_level": {
+      "main": [
+        [
+          {
+            "node": "wenn neuer Wert kleiner als alter - also geleert wurde",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "wenn neuer Wert kleiner als alter - also geleert wurde": {
+      "main": [
+        [
+          {
+            "node": "def values for table sensor_last_empty",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Operation, do nothing1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "def values for table sensor_last_empty": {
+      "main": [
+        [
+          {
+            "node": "insert if trash was emptied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Abfrage aller Sensordaten aus der Tabelle sensor_data": {
+      "main": [
+        [
+          {
+            "node": "AVG Berechnung",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aktuelle Anzahl der Abholungen": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "def values for db",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "def values for db": {
+      "main": [
+        [
+          {
+            "node": "TimescaleDB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Berechnung estimated_full_time": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "def fields for db - Berlin1": {
+      "main": [
+        [
+          {
+            "node": "sensor_id in sensor_data exists",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "insert data in TimescaleDB",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Abfrage aller Sensordaten aus der Tabelle sensor_data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Aktuelle Anzahl der Abholungen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wenn Sensor schon existiert": {
+      "main": [
+        [
+          {
+            "node": "No Operation, do nothing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "insert if trash was emptied": {
+      "main": [
+        []
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "insert sensor in sensor_data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Zeile in sensor_avg_fill_rate einfügen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "sensor_id in sensor_data exists": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Wenn Sensor schon existiert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "insert sensor in sensor_data": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zeile in sensor_avg_fill_rate einfügen": {
+      "main": [
+        []
+      ]
+    },
+    "sensor über 50": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "openrouteservice API optimise",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: API Output in JSON1": {
+      "main": [
+        [
+          {
+            "node": "code für direction API (as array)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "get sensor_id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "code für direction API (as array)": {
+      "main": [
+        [
+          {
+            "node": "openrouteserivce API directions",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "openrouteserivce API directions as Geojson",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "openrouteservice API optimise": {
+      "main": [
+        [
+          {
+            "node": "Code: API Output in JSON1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "openrouteserivce API directions": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge2": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get sensor_id": {
+      "main": [
+        [
+          {
+            "node": "Array of sensor_ids",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Array of sensor_ids": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "openrouteserivce API directions as Geojson": {
+      "main": [
+        [
+          {
+            "node": "Code2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code2": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "sensor über 50",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "new route in route_plans1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TimescaleDB": {
+      "main": [
+        []
+      ]
+    },
+    "Schedule Trigger1": {
+      "main": [
+        [
+          {
+            "node": "Abfrage new fill_in",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "fields: new level for new sensor",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge3": {
+      "main": [
+        [
+          {
+            "node": "fields: new level",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "fields: new level": {
+      "main": [
+        [
+          {
+            "node": "Abfrage aller Sensordaten aus der Tabelle sensor_data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Aktuelle Anzahl der Abholungen",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "fields: new level for new sensor": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Abfrage Müllaufkommen pro Location": {
+      "main": [
+        [
+          {
+            "node": "Convert to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to File": {
+      "main": [
+        [
+          {
+            "node": "Upload file",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send a message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload file": {
+      "main": [
+        []
+      ]
+    },
+    "Abfrage new fill_in": {
+      "main": [
+        [
+          {
+            "node": "Abfrage value yesterday",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge3",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Abfrage value yesterday": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "einfach auffüllen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields2": {
+      "main": [
+        [
+          {
+            "node": "sensordaten in DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "sensordaten in DB": {
+      "main": [
+        [
+          {
+            "node": "TimescaleDB2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TimescaleDB2": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields3": {
+      "main": [
+        [
+          {
+            "node": "TimescaleDB1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Abfrage Müllaufkommen pro Location",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MQTT Trigger": {
+      "main": [
+        [
+          {
+            "node": "def fields for db - Berlin1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Abfrage Müllaufkommen pro Location",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MQTT Trigner TTN": {
+      "main": [
+        [
+          {
+            "node": "MQTT message to JSON - Berlin1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MQTT message to JSON - Berlin1": {
+      "main": [
+        [
+          {
+            "node": "def fields for db - Berlin2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "def fields for db - Berlin2": {
+      "main": [
+        [
+          {
+            "node": "insert data in TimescaleDB",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "sensor_id in sensor_data exists",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Abfrage aller Sensordaten aus der Tabelle sensor_data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Aktuelle Anzahl der Abholungen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "3f1e50a5-4145-4ad8-9ef6-ee25c3ab01bf",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "81d00b3763d163cee62edd316adc44adfa3b642e5de36538ce3be7e1049c618e"
+  },
+  "nodeGroups": [],
+  "id": "oRDmBgwaOtRJQTLS",
+  "tags": [
+    {
+      "updatedAt": "2025-10-14T10:12:44.478Z",
+      "createdAt": "2025-10-14T10:12:44.478Z",
+      "id": "NA0S3kdbsqimMiFg",
+      "name": "Bachelorarbeit"
+    }
+  ]
+}
